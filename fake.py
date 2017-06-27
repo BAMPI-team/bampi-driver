@@ -208,30 +208,49 @@ class FakeDriver(driver.ComputeDriver):
 
         # XXX: Where dirty hack begins...
         def _get_task_status(t_id):
-            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks/{task_id}".format(bampi_ip_addr=BAMPI_IP_ADDR, bampi_port=BAMPI_PORT, bampi_api_base_url=BAMPI_API_BASE_URL, task_id=t_id), auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+            r = requests.get("http://{bampi_ip_addr}:{bampi_port}""{bampi_api_base_url}/tasks/{task_id}"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        task_id=t_id),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
             t_status = r.json()['status']
             return t_status
 
         def _wait_for_ready():
             """Called at an interval until the task is successfully ended."""
             status = _get_task_status(t_id)
-            LOG.info(_LI("[BAMPI] Task %(task_id)s status=%(status)s"), {'task_id': t_id, 'status': status}, instance=instance)
+            LOG.info(_LI("[BAMPI] Task %(task_id)s status=%(status)s"),
+                     {'task_id': t_id,
+                      'status': status},
+                     instance=instance)
 
             if status == 'Success':
-                LOG.info(_LI("[BAMPI] Task %(task_id)s ended successfully."), {'task_id': t_id, 'status': status}, instance=instance)
+                LOG.info(_LI("[BAMPI] Task %(task_id)s ended successfully."),
+                         {'task_id': t_id,
+                          'status': status},
+                         instance=instance)
                 raise loopingcall.LoopingCallDone()
             if status == 'Error':
-                LOG.error(_LE("[BAMPI] Task %(task_id)s failed."), {'task_id': t_id}, instance=instance)
+                LOG.error(_LE("[BAMPI] Task %(task_id)s failed."),
+                          {'task_id': t_id},
+                          instance=instance)
                 raise loopingcall.LoopingCallDone(False)
 
         # Specify hostname to decide which base metal server to provision
         LOG.info(_LI("[BAMPI] hostname=%s"), instance.hostname, instance=instance)
-        r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers".format(bampi_ip_addr=BAMPI_IP_ADDR, bampi_port=BAMPI_PORT, bampi_api_base_url=BAMPI_API_BASE_URL), auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+        r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers"
+                            .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                    bampi_port=BAMPI_PORT,
+                                    bampi_api_base_url=BAMPI_API_BASE_URL),
+                         auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
         servers = r.json()
         try:
             server = (s for s in servers if s['hostname'].lower() == instance.hostname).next()
         except StopIteration:
-            LOG.warn(_LW("[BAMPI] Server specified not found, hostname=%s"), instance.hostname, instance=instance)
+            LOG.warn(_LW("[BAMPI] Server specified not found, hostname=%s"),
+                     instance.hostname,
+                     instance=instance)
             server = None
             # TODO: Raise some exception to upper layer
 
@@ -248,15 +267,25 @@ class FakeDriver(driver.ComputeDriver):
 
         # Requesting outer service to execute the task
         LOG.info(_LI("[BAMPI] REQ => restore_os..."), instance=instance)
-        r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'.format(bampi_ip_addr=BAMPI_IP_ADDR, bampi_port=BAMPI_PORT, bampi_api_base_url=BAMPI_API_BASE_URL), auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json=task_payload)
+        r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
+                            .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                    bampi_port=BAMPI_PORT,
+                                    bampi_api_base_url=BAMPI_API_BASE_URL),
+                          auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json=task_payload)
         try:
             t_id = r.json()['id']
         except KeyError:
             # If we cannot find 'id' in return json...
-            LOG.error(_LE("[BAMPI] RESP => ret_code=%s, image %s not found"), r.status_code, image_meta['name'], instance=instance)
+            LOG.error(_LE("[BAMPI] RESP => ret_code=%s, image %s not found"),
+                      r.status_code,
+                      image_meta['name'],
+                      instance=instance)
             return
         else:
-            LOG.info(_LI("[BAMPI] RESP => ret_code=%s, task_id=%s"), r.status_code, t_id, instance=instance)
+            LOG.info(_LI("[BAMPI] RESP => ret_code=%s, task_id=%s"),
+                     r.status_code,
+                     t_id,
+                     instance=instance)
 
         # Polling for task status
         time = loopingcall.FixedIntervalLoopingCall(_wait_for_ready)
@@ -266,7 +295,8 @@ class FakeDriver(driver.ComputeDriver):
         if ret == False:
             raise exception.NovaException("Task failed. Abort instance spawning...")
 
-        LOG.info(_LI("[BAMPI] All tasks have ended successfully."), instance=instance)
+        LOG.info(_LI("[BAMPI] All tasks have ended successfully."),
+                 instance=instance)
 
     def snapshot(self, context, instance, image_id, update_task_state):
         if instance.uuid not in self.instances:
@@ -320,7 +350,13 @@ class FakeDriver(driver.ComputeDriver):
     def power_off(self, instance, timeout=0, retry_interval=0):
         LOG.info(_LI("[BAMPI] Power off hostname=%s" % instance.hostname), instance=instance)
         try:
-            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus".format(bampi_ip_addr=BAMPI_IP_ADDR, bampi_port=BAMPI_PORT, bampi_api_base_url=BAMPI_API_BASE_URL, hostname=instance.hostname), auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json={'status': 'off'})
+            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        hostname=instance.hostname),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                             json={'status': 'off'})
             r.raise_for_status()
         except requests.exception.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
@@ -331,7 +367,13 @@ class FakeDriver(driver.ComputeDriver):
                  block_device_info=None):
         LOG.info(_LI("[BAMPI] Power on hostname=%s" % instance.hostname), instance=instance)
         try:
-            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus".format(bampi_ip_addr=BAMPI_IP_ADDR, bampi_port=BAMPI_PORT, bampi_api_base_url=BAMPI_API_BASE_URL, hostname=instance.hostname), auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json={'status': 'on'})
+            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        hostname=instance.hostname),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                             json={'status': 'on'})
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
@@ -416,7 +458,12 @@ class FakeDriver(driver.ComputeDriver):
         if instance.uuid not in self.instances:
             # Instance not found may caused by fake driver memory lost...
             try:
-                r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus".format(bampi_ip_addr=BAMPI_IP_ADDR, bampi_port=BAMPI_PORT, bampi_api_base_url=BAMPI_API_BASE_URL, hostname=instance.hostname), auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+                r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
+                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                            bampi_port=BAMPI_PORT,
+                                            bampi_api_base_url=BAMPI_API_BASE_URL,
+                                            hostname=instance.hostname),
+                                 auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
                 r.raise_for_status()
             except requests.exceptions.HTTPError as e:
                 LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
@@ -437,9 +484,15 @@ class FakeDriver(driver.ComputeDriver):
 
         i = self.instances[instance.uuid]
 
-        LOG.info(_LI("[BAMPI] get_info hostname=%s" % instance.hostname), instance=instance)
+        LOG.info(_LI("[BAMPI] get_info hostname=%s" % instance.hostname),
+                 instance=instance)
         try:
-            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus".format(bampi_ip_addr=BAMPI_IP_ADDR, bampi_port=BAMPI_PORT, bampi_api_base_url=BAMPI_API_BASE_URL, hostname=instance.hostname), auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        hostname=instance.hostname),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
@@ -654,7 +707,11 @@ class FakeDriver(driver.ComputeDriver):
     def get_available_nodes(self, refresh=False):
         LOG.info(_LI("ALL FAKE NODES: %s"), _FAKE_NODES)
 
-        response = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers".format(bampi_ip_addr=BAMPI_IP_ADDR, bampi_port=BAMPI_PORT, bampi_api_base_url=BAMPI_API_BASE_URL), auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+        response = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers"
+                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                            bampi_port=BAMPI_PORT,
+                                            bampi_api_base_url=BAMPI_API_BASE_URL),
+                                            auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
         info = ''
         for server in response.json():
             i = "id={id}, hostname={hostname}, " \
