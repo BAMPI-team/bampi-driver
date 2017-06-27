@@ -248,14 +248,10 @@ class FakeDriver(driver.ComputeDriver):
         try:
             server = (s for s in servers if s['hostname'].lower() == instance.hostname).next()
         except StopIteration:
-            LOG.warn(_LW("[BAMPI] Server specified not found, hostname=%s"),
+            LOG.warn(_LW("[BAMPI] Bare-metal server '%s' specified not found, fallback to fake instance"),
                      instance.hostname,
                      instance=instance)
-            server = None
             # TODO: Raise some exception to upper layer
-
-        # Normal Case
-        if server is None:
             return
 
         # Iterate through all tasks in default task queue
