@@ -294,6 +294,8 @@ class FakeDriver(driver.ComputeDriver):
         LOG.info(_LI("[BAMPI] All tasks have ended successfully."),
                  instance=instance)
 
+        #TODO: Swap from provision network to tenant netowrk
+
     def snapshot(self, context, instance, image_id, update_task_state):
         if instance.uuid not in self.instances:
             raise exception.InstanceNotRunning(instance_id=instance.uuid)
@@ -561,6 +563,25 @@ class FakeDriver(driver.ComputeDriver):
 
     def block_stats(self, instance, disk_id):
         return [0L, 0L, 0L, 0L, None]
+
+    def macs_for_instance(self, instance):
+        macs = []
+        try:
+            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        hostname=instance.hostname),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+            r.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
+            return None
+        else:
+            mac = r.json()['macAddress']
+            macs.append(mac)
+
+        return set(macs)
 
     def get_console_output(self, context, instance):
         return 'FAKE CONSOLE OUTPUT\nANOTHER\nLAST LINE'
