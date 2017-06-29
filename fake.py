@@ -237,7 +237,7 @@ class FakeDriver(driver.ComputeDriver):
                           instance=instance)
                 raise loopingcall.LoopingCallDone(False)
 
-        # Specify hostname to decide which base metal server to provision
+        # Specify hostname to decide which bare metal server to provision
         LOG.info(_LI("[BAMPI] hostname=%s"), instance.hostname, instance=instance)
         r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers"
                             .format(bampi_ip_addr=BAMPI_IP_ADDR,
