@@ -67,6 +67,21 @@ BAMPI_API_BASE_URL = '/bampi/api/kddi/v1'
 BAMPI_USER = 'admin'
 BAMPI_PASS = 'admin'
 
+# Peregrine basic information
+PEREGRINE_IP_ADDR = '127.0.0.1'
+PEREGRINE_PORT = 8282
+PEREGRINE_API_BASE_URL = '/controller/nb/v3'
+PEREGRINE_USER = 'admin'
+PEREGRINE_PASS = 'admin'
+
+# HaaS-core basic information
+HAAS_CORE_IP_ADDR = '10.5.168.66'
+HAAS_CORE_PORT = 8080
+HAAS_CORE_API_BASE_URL = '/haas-core'
+OS_USER = 'admin'
+OS_PASS = 'password'
+OS_TENANT = 'admin'
+
 # Power state mapping
 power_state_map = {
     'on': power_state.RUNNING,
@@ -294,7 +309,53 @@ class FakeDriver(driver.ComputeDriver):
         LOG.info(_LI("[BAMPI] All tasks have ended successfully."),
                  instance=instance)
 
-        #TODO: Swap from provision network to tenant netowrk
+
+        # Get segmentation ID of desired tenant network from HaaS-core
+        ni = jsonutils.loads(network_info.json())
+        tnid = ni[0]['network']['id']
+        LOG.info(_LI("tenant network id = %s"), tnid, instance=instance)
+        LOG.info(_LI("[HAAS_CORE] REQ => network_detail..."), instance=instance)
+        r = requests.get("http://{haas_core_ip_addr}:{haas_core_port}{haas_core_api_base_url}/neutron/{user}/{password}/{tenant}/network/{tenant_network_id}"
+                            .format(haas_core_ip_addr=HAAS_CORE_IP_ADDR,
+                                    haas_core_port=HAAS_CORE_PORT,
+                                    haas_core_api_base_url=HAAS_CORE_API_BASE_URL,
+                                    user=OS_USER,
+                                    password=OS_PASS,
+                                    tenant=OS_TENANT,
+                                    tenant_network_id=tnid))
+        if r.status_code == 200:
+            data = r.json()['data']
+            nd = jsonutils.loads(data)
+            segmentation_id = nd['RegionOne']['segmentationId']
+            LOG.info(_LI("segmentation id = %s"), segmentation_id, instance=instance)
+            network_provision_payload = {
+                'provision_vlan': {
+                    'admin_server_name': instance.display_name,
+                    'port_group_name': 'PG-1',
+                    'untagged_vlan': segmentation_id,
+                    'tagged_vlans': []
+                }
+            }
+        else:
+            LOG.error(_LE("[HAAS_CORE] ret_code=%s"),
+                      r.status_code,
+                      instance=instance)
+
+        # Change VLAN ID from provision network to tenant network
+        LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."), instance=instance)
+        r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
+                            .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
+                                    peregrine_port=PEREGRINE_PORT,
+                                    peregrine_api_base_url=PEREGRINE_API_BASE_URL),
+                          auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
+                          json=network_provision_payload)
+        if r.status_code == 200:
+            LOG.info(_LI("[PEREGRINE] Tenant network set successfully."), instance=instance)
+        else:
+        #TODO: Error handling
+            LOG.error(_LE("[PEREGRINE] ret_code=%s"),
+                      r.status_code,
+                      instance=instance)
 
     def snapshot(self, context, instance, image_id, update_task_state):
         if instance.uuid not in self.instances:
