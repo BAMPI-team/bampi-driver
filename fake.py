@@ -257,6 +257,7 @@ class FakeDriver(driver.ComputeDriver):
 
         # Specify hostname to decide which bare metal server to provision
         LOG.info(_LI("[BAMPI] hostname=%s"), instance.hostname, instance=instance)
+        LOG.info(_LI("NETWORK_INFO: %s"), network_info.json(), instance=instance)
         r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers"
                             .format(bampi_ip_addr=BAMPI_IP_ADDR,
                                     bampi_port=BAMPI_PORT,
@@ -273,41 +274,58 @@ class FakeDriver(driver.ComputeDriver):
             return
 
         # Iterate through all tasks in default task queue
-        task_payload = {
-            'hostname': server['hostname'],
-            'taskType': 'restore_os',
-            'taskProfile': image_meta['name']
-        }
+        default_tasks_q = [
+            {
+                'taskType': 'configure_raid',
+                'taskProfile': 'clean_up_conf'
+            },
+            {
+                'taskType': 'configure_raid',
+                'taskProfile': 'test_S2B_raid_conf'
+            },
+            {
+                'taskType': 'restore_os',
+                'taskProfile': image_meta['name']
+            }
+        ]
+        for task in default_tasks_q:
+            task['hostname'] = server['hostname']
 
-        # Requesting outer service to execute the task
-        LOG.info(_LI("[BAMPI] REQ => restore_os..."), instance=instance)
-        r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
-                            .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                    bampi_port=BAMPI_PORT,
-                                    bampi_api_base_url=BAMPI_API_BASE_URL),
-                          auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json=task_payload)
-        try:
-            t_id = r.json()['id']
-        except KeyError:
-            # If we cannot find 'id' in return json...
-            LOG.error(_LE("[BAMPI] RESP => ret_code=%s, image %s not found"),
-                      r.status_code,
-                      image_meta['name'],
-                      instance=instance)
-            return
-        else:
-            LOG.info(_LI("[BAMPI] RESP => ret_code=%s, task_id=%s"),
-                     r.status_code,
-                     t_id,
-                     instance=instance)
+            # Requesting outer service to execute the task
+            LOG.info(_LI("[BAMPI] REQ => Starting task %s..."), task['taskType'], instance=instance)
+            r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL),
+                              auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json=task)
+            try:
+                t_id = r.json()['id']
+            except KeyError:
+                # If we cannot find 'id' in return json...
+                LOG.error(_LE("[BAMPI] RESP => task_type=%s, task_profile=%s, ret_code=%s"),
+                          task['taskType'],
+                          task['taskProfile'],
+                          r.status_code,
+                          instance=instance)
+                return
+            else:
+                LOG.info(_LI("[BAMPI] RESP => ret_code=%s, task_id=%s"),
+                         r.status_code,
+                         t_id,
+                         instance=instance)
 
-        # Polling for task status
-        time = loopingcall.FixedIntervalLoopingCall(_wait_for_ready)
-        ret = time.start(interval=5).wait()
+            # Polling for task status
+            time = loopingcall.FixedIntervalLoopingCall(_wait_for_ready)
+            ret = time.start(interval=5).wait()
 
-        # Task failed, abort spawning
-        if ret == False:
-            raise exception.NovaException("Task failed. Abort instance spawning...")
+            # Task failed, abort spawning
+            if ret == False:
+                raise exception.NovaException("Task failed. Abort instance spawning...")
+            else:
+                LOG.info(_LI("[BAMPI] Task %s:%s has ended successfully."),
+                         task['taskType'],
+                         task['taskProfile'],
+                         instance=instance)
 
         LOG.info(_LI("[BAMPI] All tasks have ended successfully."),
                  instance=instance)
