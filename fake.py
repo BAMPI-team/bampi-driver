@@ -385,7 +385,20 @@ class FakeDriver(driver.ComputeDriver):
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
-        pass
+        LOG.info(_LI("[BAMPI] Power reset hostname=%s" % instance.hostname), instance=instance)
+        try:
+            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        hostname=instance.hostname),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                             json={'status': 'reset'})
+            r.raise_for_status()
+        except requests.exception.HTTPError as e:
+            LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
+        finally:
+            self.instances[instance.uuid].state = power_state.RUNNING
 
     @staticmethod
     def get_host_ip_addr():
