@@ -273,6 +273,15 @@ class FakeDriver(driver.ComputeDriver):
             # TODO: Raise some exception to upper layer
             return
 
+        # Change boot mode to iKVM
+        r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/bootMode"
+                            .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                    bampi_port=BAMPI_PORT,
+                                    bampi_api_base_url=BAMPI_API_BASE_URL,
+                                    hostname=instance.hostname),
+                         auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                         json={'bootMode': 'iKVM'})
+        LOG.info(_LI("[BAMPI] %s boot mode changed to iKVM"), instance.hostname, instance=instance)
         # Iterate through all tasks in default task queue
         default_tasks_q = [
             {
@@ -329,6 +338,15 @@ class FakeDriver(driver.ComputeDriver):
 
         LOG.info(_LI("[BAMPI] All tasks have ended successfully."),
                  instance=instance)
+        # Change boot mode to Disabled
+        r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/bootMode"
+                            .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                    bampi_port=BAMPI_PORT,
+                                    bampi_api_base_url=BAMPI_API_BASE_URL,
+                                    hostname=instance.hostname),
+                         auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                         json={'bootMode': 'Disabled'})
+        LOG.info(_LI("[BAMPI] %s boot mode changed to Disabled"), instance.hostname, instance=instance)
 
 
         # Get segmentation ID of desired tenant network from HaaS-core
@@ -519,6 +537,16 @@ class FakeDriver(driver.ComputeDriver):
                 LOG.error(_LE("[PEREGRINE] ret_code=%s"),
                           r.status_code,
                           instance=instance)
+
+            # Change boot mode to iKVM
+            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/bootMode"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        hostname=instance.hostname),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                             json={'bootMode': 'iKVM'})
+            LOG.info(_LI("[BAMPI] %s boot mode changed to iKVM"), instance.hostname, instance=instance)
 
             # Back to fake driver default flow
             flavor = instance.flavor
