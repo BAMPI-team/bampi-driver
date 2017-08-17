@@ -273,21 +273,17 @@ class FakeDriver(driver.ComputeDriver):
             # TODO: Raise some exception to upper layer
             return
 
-        # Change boot mode to iKVM
-        r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/bootMode"
-                            .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                    bampi_port=BAMPI_PORT,
-                                    bampi_api_base_url=BAMPI_API_BASE_URL,
-                                    hostname=instance.hostname),
-                         auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
-                         json={'bootMode': 'iKVM'})
-        LOG.info(_LI("[BAMPI] %s boot mode changed to iKVM"), instance.hostname, instance=instance)
+        ## Change boot mode to iKVM
+        #r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/bootMode"
+        #                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
+        #                            bampi_port=BAMPI_PORT,
+        #                            bampi_api_base_url=BAMPI_API_BASE_URL,
+        #                            hostname=instance.hostname),
+        #                 auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+        #                 json={'bootMode': 'iKVM'})
+        #LOG.info(_LI("[BAMPI] %s boot mode changed to iKVM"), instance.hostname, instance=instance)
         # Iterate through all tasks in default task queue
         default_tasks_q = [
-            {
-                'taskType': 'configure_raid',
-                'taskProfile': 'clean_up_conf'
-            },
             {
                 'taskType': 'configure_raid',
                 'taskProfile': 'test_S2B_raid_conf'
@@ -301,7 +297,7 @@ class FakeDriver(driver.ComputeDriver):
             task['hostname'] = server['hostname']
 
             # Requesting outer service to execute the task
-            LOG.info(_LI("[BAMPI] REQ => Starting task %s..."), task['taskType'], instance=instance)
+            LOG.info(_LI("[BAMPI] REQ => Starting provision task %s..."), task['taskType'], instance=instance)
             r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
                                 .format(bampi_ip_addr=BAMPI_IP_ADDR,
                                         bampi_port=BAMPI_PORT,
@@ -311,14 +307,14 @@ class FakeDriver(driver.ComputeDriver):
                 t_id = r.json()['id']
             except KeyError:
                 # If we cannot find 'id' in return json...
-                LOG.error(_LE("[BAMPI] RESP => task_type=%s, task_profile=%s, ret_code=%s"),
+                LOG.error(_LE("[BAMPI] RESP (provision) => task_type=%s, task_profile=%s, ret_code=%s"),
                           task['taskType'],
                           task['taskProfile'],
                           r.status_code,
                           instance=instance)
                 return
             else:
-                LOG.info(_LI("[BAMPI] RESP => ret_code=%s, task_id=%s"),
+                LOG.info(_LI("[BAMPI] RESP (provision) => ret_code=%s, task_id=%s"),
                          r.status_code,
                          t_id,
                          instance=instance)
@@ -329,14 +325,14 @@ class FakeDriver(driver.ComputeDriver):
 
             # Task failed, abort spawning
             if ret == False:
-                raise exception.NovaException("Task failed. Abort instance spawning...")
+                raise exception.NovaException("Provision task failed. Abort instance spawning...")
             else:
-                LOG.info(_LI("[BAMPI] Task %s:%s has ended successfully."),
+                LOG.info(_LI("[BAMPI] Provision task %s:%s has ended successfully."),
                          task['taskType'],
                          task['taskProfile'],
                          instance=instance)
 
-        LOG.info(_LI("[BAMPI] All tasks have ended successfully."),
+        LOG.info(_LI("[BAMPI] All provision tasks have ended successfully."),
                  instance=instance)
         # Change boot mode to Disabled
         r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/bootMode"
@@ -511,6 +507,37 @@ class FakeDriver(driver.ComputeDriver):
 
     def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None):
+
+        def _get_task_status(t_id):
+            r = requests.get("http://{bampi_ip_addr}:{bampi_port}""{bampi_api_base_url}/tasks/{task_id}"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        task_id=t_id),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+            t_status = r.json()['status']
+            return t_status
+
+        def _wait_for_ready():
+            """Called at an interval until the task is successfully ended."""
+            status = _get_task_status(t_id)
+            LOG.info(_LI("[BAMPI] Task %(task_id)s status=%(status)s"),
+                     {'task_id': t_id,
+                      'status': status},
+                     instance=instance)
+
+            if status == 'Success':
+                LOG.info(_LI("[BAMPI] Task %(task_id)s ended successfully."),
+                         {'task_id': t_id,
+                          'status': status},
+                         instance=instance)
+                raise loopingcall.LoopingCallDone()
+            if status == 'Error':
+                LOG.error(_LE("[BAMPI] Task %(task_id)s failed."),
+                          {'task_id': t_id},
+                          instance=instance)
+                raise loopingcall.LoopingCallDone(False)
+
         key = instance.uuid
         if key in self.instances:
             # Switch back to provision network
@@ -547,6 +574,69 @@ class FakeDriver(driver.ComputeDriver):
                              auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
                              json={'bootMode': 'iKVM'})
             LOG.info(_LI("[BAMPI] %s boot mode changed to iKVM"), instance.hostname, instance=instance)
+
+            # Cleanup procedure
+            default_tasks_q = [
+                {
+                    'taskType': 'configure_raid',
+                    'taskProfile': 'clean_up_conf'
+                }
+            ]
+            for task in default_tasks_q:
+                task['hostname'] = instance.display_name
+
+                # Requesting outer service to execute the task
+                LOG.info(_LI("[BAMPI] REQ => Starting cleanup task %s..."), task['taskType'], instance=instance)
+                r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
+                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                            bampi_port=BAMPI_PORT,
+                                            bampi_api_base_url=BAMPI_API_BASE_URL),
+                                  auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json=task)
+                try:
+                    t_id = r.json()['id']
+                except KeyError:
+                    # If we cannot find 'id' in return json...
+                    LOG.error(_LE("[BAMPI] RESP (cleanup) => task_type=%s, task_profile=%s, ret_code=%s"),
+                              task['taskType'],
+                              task['taskProfile'],
+                              r.status_code,
+                              instance=instance)
+                    return
+                else:
+                    LOG.info(_LI("[BAMPI] RESP (cleanup) => ret_code=%s, task_id=%s"),
+                             r.status_code,
+                             t_id,
+                             instance=instance)
+
+                # Polling for task status
+                time = loopingcall.FixedIntervalLoopingCall(_wait_for_ready)
+                ret = time.start(interval=5).wait()
+
+                # Task failed, abort spawning
+                if ret == False:
+                    raise exception.NovaException("Cleanup task failed. Abort instance destroying...")
+                else:
+                    LOG.info(_LI("[BAMPI] Cleanup task %s:%s has ended successfully."),
+                             task['taskType'],
+                             task['taskProfile'],
+                             instance=instance)
+
+            LOG.info(_LI("[BAMPI] All cleanup tasks have ended successfully."),
+                     instance=instance)
+
+            # Boot into disposable OS to stand-by
+            LOG.info(_LI("[BAMPI] Power on hostname=%s to stand-by" % instance.hostname), instance=instance)
+            try:
+                r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
+                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                            bampi_port=BAMPI_PORT,
+                                            bampi_api_base_url=BAMPI_API_BASE_URL,
+                                            hostname=instance.hostname),
+                                 auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                                 json={'status': 'on'})
+                r.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
 
             # Back to fake driver default flow
             flavor = instance.flavor
