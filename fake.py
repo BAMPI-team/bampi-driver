@@ -77,10 +77,9 @@ PEREGRINE_PASS = 'admin'
 # HaaS-core basic information
 HAAS_CORE_IP_ADDR = '10.5.168.66'
 HAAS_CORE_PORT = 8080
-HAAS_CORE_API_BASE_URL = '/haas-core'
+HAAS_CORE_API_BASE_URL = '/haas-core/api'
 OS_USER = 'admin'
 OS_PASS = 'password'
-OS_TENANT = 'admin'
 
 # Network configuration for provisioning
 PROVISION_VLAN_ID = 5
@@ -350,18 +349,16 @@ class FakeDriver(driver.ComputeDriver):
         tnid = ni[0]['network']['id']
         LOG.info(_LI("tenant network id = %s"), tnid, instance=instance)
         LOG.info(_LI("[HAAS_CORE] REQ => network_detail..."), instance=instance)
-        r = requests.get("http://{haas_core_ip_addr}:{haas_core_port}{haas_core_api_base_url}/neutron/{user}/{password}/{tenant}/network/{tenant_network_id}"
+        r = requests.get("http://{haas_core_ip_addr}:{haas_core_port}{haas_core_api_base_url}/network/get/{tenant_network_id}"
                             .format(haas_core_ip_addr=HAAS_CORE_IP_ADDR,
                                     haas_core_port=HAAS_CORE_PORT,
                                     haas_core_api_base_url=HAAS_CORE_API_BASE_URL,
-                                    user=OS_USER,
-                                    password=OS_PASS,
-                                    tenant=OS_TENANT,
-                                    tenant_network_id=tnid))
+                                    tenant_network_id=tnid),
+                         auth=HTTPBasicAuth(OS_USER, OS_PASS))
         if r.status_code == 200:
             data = r.json()['data']
             nd = jsonutils.loads(data)
-            segmentation_id = nd['RegionOne']['segmentationId']
+            segmentation_id = nd['provider:segmentation_id']
             LOG.info(_LI("segmentation id = %s"), segmentation_id, instance=instance)
             network_provision_payload = {
                 'provision_vlan': {
