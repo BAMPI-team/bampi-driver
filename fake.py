@@ -456,19 +456,24 @@ class FakeDriver(driver.ComputeDriver):
 
     def power_off(self, instance, timeout=0, retry_interval=0):
         LOG.info(_LI("[BAMPI] Power off hostname=%s" % instance.hostname), instance=instance)
-        try:
-            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
-                                        hostname=instance.hostname),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
-                             json={'status': 'off'})
-            r.raise_for_status()
-        except requests.exception.HTTPError as e:
-            LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
-        finally:
-            self.instances[instance.uuid].state = power_state.SHUTDOWN
+
+	# NOTE: Prevent machines being powered off by power status check mechanism
+	if instance.vm_state == 'stopped' and instance.power_state == power_state.RUNNING:
+            LOG.warn(_LW("Forcing machine %s to be powered off is prevented" % instance.hostname), instance=instance)
+	else:
+            try:
+                r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
+                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                            bampi_port=BAMPI_PORT,
+                                            bampi_api_base_url=BAMPI_API_BASE_URL,
+                                            hostname=instance.hostname),
+                                 auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                                 json={'status': 'off'})
+                r.raise_for_status()
+            except requests.exception.HTTPError as e:
+                LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
+            finally:
+                self.instances[instance.uuid].state = power_state.SHUTDOWN
 
     def power_on(self, context, instance, network_info,
                  block_device_info=None):
