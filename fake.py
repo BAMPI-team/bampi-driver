@@ -81,6 +81,8 @@ HAAS_CORE_API_BASE_URL = '/haas-core/api'
 OS_USER = 'admin'
 OS_PASS = 'password'
 
+DUMMY_IMG_NAME = 'install-less_image.iso'
+
 # Network configuration for provisioning
 PROVISION_VLAN_ID = 5
 
@@ -281,17 +283,38 @@ class FakeDriver(driver.ComputeDriver):
         #                 auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
         #                 json={'bootMode': 'iKVM'})
         #LOG.info(_LI("[BAMPI] %s boot mode changed to iKVM"), instance.hostname, instance=instance)
+
+        # Check dummy or not
+        if image_meta['name'] == DUMMY_IMG_NAME:
+            LOG.info(_LI("[BAMPI] Dummy RestoreOS on hostname=%s"), instance.hostname, instance=instance)
+            try:
+                r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
+                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                            bampi_port=BAMPI_PORT,
+                                            bampi_api_base_url=BAMPI_API_BASE_URL,
+                                            hostname=instance.hostname),
+                                 auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+                r.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
+                raise exception.InstanceNotFound(instance_id=instance.uuid)
+            else:
+               # Dummy RestoreOS, do nothing
+               default_tasks_q = []
+        else:
+            # Normal provisioning workflow
+            default_tasks_q = [
+                {
+                    'taskType': 'configure_raid',
+                    'taskProfile': 'test_S2B_raid_conf'
+                },
+                {
+                    'taskType': 'restore_os',
+                    'taskProfile': image_meta['name']
+                }
+            ]
+
         # Iterate through all tasks in default task queue
-        default_tasks_q = [
-            {
-                'taskType': 'configure_raid',
-                'taskProfile': 'test_S2B_raid_conf'
-            },
-            {
-                'taskType': 'restore_os',
-                'taskProfile': image_meta['name']
-            }
-        ]
         for task in default_tasks_q:
             task['hostname'] = server['hostname']
 
