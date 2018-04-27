@@ -26,24 +26,22 @@ semantics of real hypervisor connections.
 import collections
 import contextlib
 
-from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
+from oslo_service import loopingcall
+from oslo_utils import versionutils
 
 from nova.compute import arch
 from nova.compute import hv_type
 from nova.compute import power_state
 from nova.compute import task_states
 from nova.compute import vm_mode
+import nova.conf
 from nova.console import type as ctype
-from nova import db
 from nova import exception
-from nova.i18n import _
 from nova.i18n import _LI
 from nova.i18n import _LW
 from nova.i18n import _LE
-from nova.openstack.common import loopingcall
-from nova import utils
 from nova.virt import diagnostics
 from nova.virt import driver
 from nova.virt import hardware
@@ -52,34 +50,34 @@ from nova.virt import virtapi
 import requests
 from requests.auth import HTTPBasicAuth
 
-CONF = cfg.CONF
-CONF.import_opt('host', 'nova.netconf')
+CONF = nova.conf.CONF
 
 LOG = logging.getLogger(__name__)
 
 
 _FAKE_NODES = None
 
+
 # BAMPI basic information
-BAMPI_IP_ADDR = '10.5.168.200'
+BAMPI_IP_ADDR = '100.73.11.39'
 BAMPI_PORT = 8080
 BAMPI_API_BASE_URL = '/bampi/api/kddi/v1'
 BAMPI_USER = 'admin'
 BAMPI_PASS = 'admin'
 
 # Peregrine basic information
-PEREGRINE_IP_ADDR = '127.0.0.1'
+PEREGRINE_IP_ADDR = '100.73.11.32'
 PEREGRINE_PORT = 8282
 PEREGRINE_API_BASE_URL = '/controller/nb/v3'
 PEREGRINE_USER = 'admin'
 PEREGRINE_PASS = 'admin'
 
 # HaaS-core basic information
-HAAS_CORE_IP_ADDR = '10.5.168.66'
+HAAS_CORE_IP_ADDR = '100.73.11.33'
 HAAS_CORE_PORT = 8080
 HAAS_CORE_API_BASE_URL = '/haas-core/api'
 OS_USER = 'admin'
-OS_PASS = 'password'
+OS_PASS = 'openstack'
 
 DUMMY_IMG_NAME = 'install-less_image.iso'
 
@@ -91,6 +89,7 @@ power_state_map = {
     'on': power_state.RUNNING,
     'off': power_state.SHUTDOWN
 }
+
 
 def set_nodes(nodes):
     """Sets FakeDriver's node.list.
@@ -163,6 +162,7 @@ class FakeDriver(driver.ComputeDriver):
     capabilities = {
         "has_imagecache": True,
         "supports_recreate": True,
+        "supports_migrate_to_same_host": True
         }
 
     # Since we don't have a real hypervisor, pretend we have lots of
@@ -182,17 +182,16 @@ class FakeDriver(driver.ComputeDriver):
             local_gb=self.local_gb)
         self.host_status_base = {
           'hypervisor_type': 'fake',
-          'hypervisor_version': utils.convert_version_to_int('1.0'),
+          'hypervisor_version': versionutils.convert_version_to_int('1.0'),
           'hypervisor_hostname': CONF.host,
           'cpu_info': {},
           'disk_available_least': 0,
-          'supported_instances': jsonutils.dumps([(arch.X86_64,
-                                                   hv_type.FAKE,
-                                                   vm_mode.HVM)]),
+          'supported_instances': [(arch.X86_64, hv_type.FAKE, vm_mode.HVM)],
           'numa_topology': None,
           }
         self._mounts = {}
         self._interfaces = {}
+        self.active_migrations = {}
         if not _FAKE_NODES:
             set_nodes([CONF.host])
 
@@ -225,9 +224,9 @@ class FakeDriver(driver.ComputeDriver):
         fake_instance = FakeInstance(instance.name, state, uuid)
         self.instances[uuid] = fake_instance
 
-        # XXX: Where dirty hack begins...
+        # XXX: Where dirty hack begins
         def _get_task_status(t_id):
-            r = requests.get("http://{bampi_ip_addr}:{bampi_port}""{bampi_api_base_url}/tasks/{task_id}"
+            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks/{task_id}"
                                 .format(bampi_ip_addr=BAMPI_IP_ADDR,
                                         bampi_port=BAMPI_PORT,
                                         bampi_api_base_url=BAMPI_API_BASE_URL,
@@ -258,7 +257,6 @@ class FakeDriver(driver.ComputeDriver):
 
         # Specify hostname to decide which bare metal server to provision
         LOG.info(_LI("[BAMPI] hostname=%s"), instance.hostname, instance=instance)
-        LOG.info(_LI("NETWORK_INFO: %s"), network_info.json(), instance=instance)
         r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers"
                             .format(bampi_ip_addr=BAMPI_IP_ADDR,
                                     bampi_port=BAMPI_PORT,
@@ -274,18 +272,8 @@ class FakeDriver(driver.ComputeDriver):
             # TODO: Raise some exception to upper layer
             return
 
-        ## Change boot mode to iKVM
-        #r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/bootMode"
-        #                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
-        #                            bampi_port=BAMPI_PORT,
-        #                            bampi_api_base_url=BAMPI_API_BASE_URL,
-        #                            hostname=instance.hostname),
-        #                 auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
-        #                 json={'bootMode': 'iKVM'})
-        #LOG.info(_LI("[BAMPI] %s boot mode changed to iKVM"), instance.hostname, instance=instance)
-
         # Check dummy or not
-        if image_meta['name'] == DUMMY_IMG_NAME:
+        if image_meta.name == DUMMY_IMG_NAME:
             LOG.info(_LI("[BAMPI] Dummy RestoreOS on hostname=%s"), instance.hostname, instance=instance)
             try:
                 r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
@@ -299,18 +287,27 @@ class FakeDriver(driver.ComputeDriver):
                 LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
                 raise exception.InstanceNotFound(instance_id=instance.uuid)
             else:
-               # Dummy RestoreOS, do nothing
-               default_tasks_q = []
+                # Dummy RestoreOS, do nothing
+                default_tasks_q = [
+                    {
+                        'taskType': 'change_boot_mode',
+                        'taskProfile': 'Disabled'
+                    }
+                ]
         else:
             # Normal provisioning workflow
             default_tasks_q = [
                 {
-                    'taskType': 'configure_raid',
-                    'taskProfile': 'test_S2B_raid_conf'
+                    'taskType': 'change_boot_mode',
+                    'taskProfile': 'PXE'
                 },
                 {
                     'taskType': 'restore_os',
-                    'taskProfile': image_meta['name']
+                    'taskProfile': image_meta.name
+                },
+                {
+                    'taskType': 'change_boot_mode',
+                    'taskProfile': 'Disabled'
                 }
             ]
 
@@ -319,7 +316,8 @@ class FakeDriver(driver.ComputeDriver):
             task['hostname'] = server['hostname']
 
             # Requesting outer service to execute the task
-            LOG.info(_LI("[BAMPI] REQ => Starting provision task %s..."), task['taskType'], instance=instance)
+            LOG.info(_LI("[BAMPI] REQ => Starting provision task %s..."),
+                     task['taskType'], instance=instance)
             r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
                                 .format(bampi_ip_addr=BAMPI_IP_ADDR,
                                         bampi_port=BAMPI_PORT,
@@ -330,16 +328,12 @@ class FakeDriver(driver.ComputeDriver):
             except KeyError:
                 # If we cannot find 'id' in return json...
                 LOG.error(_LE("[BAMPI] RESP (provision) => task_type=%s, task_profile=%s, ret_code=%s"),
-                          task['taskType'],
-                          task['taskProfile'],
-                          r.status_code,
+                          task['taskType'], task['taskProfile'], r.status_code,
                           instance=instance)
-                return
+                raise exception.NovaException("BAMPI cannot execute task. Abort instance spawning...")
             else:
                 LOG.info(_LI("[BAMPI] RESP (provision) => ret_code=%s, task_id=%s"),
-                         r.status_code,
-                         t_id,
-                         instance=instance)
+                         r.status_code, t_id, instance=instance)
 
             # Polling for task status
             time = loopingcall.FixedIntervalLoopingCall(_wait_for_ready)
@@ -356,18 +350,9 @@ class FakeDriver(driver.ComputeDriver):
 
         LOG.info(_LI("[BAMPI] All provision tasks have ended successfully."),
                  instance=instance)
-        # Change boot mode to Disabled
-        r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/bootMode"
-                            .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                    bampi_port=BAMPI_PORT,
-                                    bampi_api_base_url=BAMPI_API_BASE_URL,
-                                    hostname=instance.hostname),
-                         auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
-                         json={'bootMode': 'Disabled'})
-        LOG.info(_LI("[BAMPI] %s boot mode changed to Disabled"), instance.hostname, instance=instance)
-
 
         # Get segmentation ID of desired tenant network from HaaS-core
+        network_provision_payload = {}
         ni = jsonutils.loads(network_info.json())
         tnid = ni[0]['network']['id']
         LOG.info(_LI("tenant network id = %s"), tnid, instance=instance)
@@ -382,7 +367,8 @@ class FakeDriver(driver.ComputeDriver):
             data = r.json()['data']
             nd = jsonutils.loads(data)
             segmentation_id = nd['provider:segmentation_id']
-            LOG.info(_LI("segmentation id = %s"), segmentation_id, instance=instance)
+            LOG.info(_LI("segmentation id = %s"),
+                     segmentation_id, instance=instance)
             network_provision_payload = {
                 'provision_vlan': {
                     'admin_server_name': instance.display_name,
@@ -395,9 +381,11 @@ class FakeDriver(driver.ComputeDriver):
             LOG.error(_LE("[HAAS_CORE] ret_code=%s"),
                       r.status_code,
                       instance=instance)
+            raise exception.NovaException("Cannot get segmentation_id from HaaS-core. Abort instance spawning...")
 
         # Change VLAN ID from provision network to tenant network
-        LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."), instance=instance)
+        LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."),
+                 instance=instance)
         r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
                             .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
                                     peregrine_port=PEREGRINE_PORT,
@@ -405,12 +393,13 @@ class FakeDriver(driver.ComputeDriver):
                           auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
                           json=network_provision_payload)
         if r.status_code == 200:
-            LOG.info(_LI("[PEREGRINE] Tenant network set successfully."), instance=instance)
+            LOG.info(_LI("[PEREGRINE] Tenant network set successfully."),
+                     instance=instance)
         else:
-        #TODO: Error handling
             LOG.error(_LE("[PEREGRINE] ret_code=%s"),
                       r.status_code,
                       instance=instance)
+            raise exception.NovaException("Cannot set tenant VLAN using Peregrine-H. Abort instance spawning...")
 
     def snapshot(self, context, instance, image_id, update_task_state):
         if instance.uuid not in self.instances:
@@ -419,7 +408,8 @@ class FakeDriver(driver.ComputeDriver):
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
-        LOG.info(_LI("[BAMPI] Power reset hostname=%s" % instance.hostname), instance=instance)
+        LOG.info(_LI("[BAMPI] Power reset hostname=%s" % instance.hostname),
+                 instance=instance)
         try:
             r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
                                 .format(bampi_ip_addr=BAMPI_IP_ADDR,
@@ -434,8 +424,7 @@ class FakeDriver(driver.ComputeDriver):
         finally:
             self.instances[instance.uuid].state = power_state.RUNNING
 
-    @staticmethod
-    def get_host_ip_addr():
+    def get_host_ip_addr(self):
         return '192.168.0.1'
 
     def set_admin_password(self, instance, new_pass):
@@ -475,11 +464,14 @@ class FakeDriver(driver.ComputeDriver):
         pass
 
     def power_off(self, instance, timeout=0, retry_interval=0):
-        LOG.info(_LI("[BAMPI] Power off hostname=%s" % instance.hostname), instance=instance)
+        LOG.info(_LI("[BAMPI] Power off hostname=%s" % instance.hostname),
+                 instance=instance)
 
-	# NOTE: Prevent machines being powered off by power status check mechanism
+	# NOTE: Prevent machines being powered off by power status check
+        # mechanism
 	if instance.vm_state == 'stopped' and instance.power_state == power_state.RUNNING:
-            LOG.warn(_LW("Forcing machine %s to be powered off is prevented" % instance.hostname), instance=instance)
+            LOG.warn(_LW("Forcing machine %s to be powered off is not allowed" % instance.hostname),
+                     instance=instance)
 	else:
             try:
                 r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
@@ -511,6 +503,9 @@ class FakeDriver(driver.ComputeDriver):
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
         finally:
             self.instances[instance.uuid].state = power_state.RUNNING
+
+    def trigger_crash_dump(self, instance):
+        pass
 
     def soft_delete(self, instance):
         pass
@@ -575,7 +570,8 @@ class FakeDriver(driver.ComputeDriver):
                 }
             }
             # Change VLAN ID from provision network to tenant network
-            LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."), instance=instance)
+            LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."),
+                     instance=instance)
             r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
                                 .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
                                         peregrine_port=PEREGRINE_PORT,
@@ -583,25 +579,20 @@ class FakeDriver(driver.ComputeDriver):
                               auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
                               json=network_provision_payload)
             if r.status_code == 200:
-                LOG.info(_LI("[PEREGRINE] Provision network set successfully."), instance=instance)
+                LOG.info(_LI("[PEREGRINE] Provision network set successfully."),
+                         instance=instance)
             else:
-            #TODO: Error handling
                 LOG.error(_LE("[PEREGRINE] ret_code=%s"),
                           r.status_code,
                           instance=instance)
-
-            # Change boot mode to iKVM
-            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/bootMode"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
-                                        hostname=instance.hostname),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
-                             json={'bootMode': 'iKVM'})
-            LOG.info(_LI("[BAMPI] %s boot mode changed to iKVM"), instance.hostname, instance=instance)
+                raise exception.NovaException("Cannot set provision VLAN using Peregrine-H. Abort instance spawning...")
 
             # Cleanup procedure
             default_tasks_q = [
+                {
+                    'taskType': 'change_boot_mode',
+                    'taskProfile': 'PXE'
+                },
                 {
                     'taskType': 'configure_raid',
                     'taskProfile': 'clean_up_conf'
@@ -611,7 +602,8 @@ class FakeDriver(driver.ComputeDriver):
                 task['hostname'] = instance.display_name
 
                 # Requesting outer service to execute the task
-                LOG.info(_LI("[BAMPI] REQ => Starting cleanup task %s..."), task['taskType'], instance=instance)
+                LOG.info(_LI("[BAMPI] REQ => Starting cleanup task %s..."),
+                         task['taskType'], instance=instance)
                 r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
                                     .format(bampi_ip_addr=BAMPI_IP_ADDR,
                                             bampi_port=BAMPI_PORT,
@@ -622,22 +614,18 @@ class FakeDriver(driver.ComputeDriver):
                 except KeyError:
                     # If we cannot find 'id' in return json...
                     LOG.error(_LE("[BAMPI] RESP (cleanup) => task_type=%s, task_profile=%s, ret_code=%s"),
-                              task['taskType'],
-                              task['taskProfile'],
-                              r.status_code,
+                              task['taskType'], task['taskProfile'], r.status_code,
                               instance=instance)
                     return
                 else:
                     LOG.info(_LI("[BAMPI] RESP (cleanup) => ret_code=%s, task_id=%s"),
-                             r.status_code,
-                             t_id,
-                             instance=instance)
+                             r.status_code, t_id, instance=instance)
 
                 # Polling for task status
                 time = loopingcall.FixedIntervalLoopingCall(_wait_for_ready)
                 ret = time.start(interval=5).wait()
 
-                # Task failed, abort spawning
+                # Task failed, abort destroying
                 if ret == False:
                     raise exception.NovaException("Cleanup task failed. Abort instance destroying...")
                 else:
@@ -648,9 +636,18 @@ class FakeDriver(driver.ComputeDriver):
 
             LOG.info(_LI("[BAMPI] All cleanup tasks have ended successfully."),
                      instance=instance)
+            LOG.info(_LI("[HAAS_CORE] REQ => Mark server as available..."),
+                     instance=instance)
+            r = requests.put('http://{haas_core_ip_addr}:{haas_core_port}{haas_core_api_base_url}/servers/{hostname}/available'
+                                .format(haas_core_ip_addr=HAAS_CORE_IP_ADDR,
+                                        haas_core_port=HAAS_CORE_PORT,
+                                        haas_core_api_base_url=HAAS_CORE_API_BASE_URL,
+                                        hostname=instance.hostname),
+                             auth=HTTPBasicAuth(OS_USER, OS_PASS))
 
             # Boot into disposable OS to stand-by
-            LOG.info(_LI("[BAMPI] Power on hostname=%s to stand-by" % instance.hostname), instance=instance)
+            LOG.info(_LI("[BAMPI] Power on hostname=%s to stand-by" % instance.hostname),
+                     instance=instance)
             try:
                 r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
                                     .format(bampi_ip_addr=BAMPI_IP_ADDR,
@@ -808,6 +805,11 @@ class FakeDriver(driver.ComputeDriver):
            running VM.
         """
         bw = []
+        for instance in instances:
+            bw.append({'uuid': instance.uuid,
+                       'mac_address': 'fa:16:3e:4c:2c:30',
+                       'bw_in': 0,
+                       'bw_out': 0})
         return bw
 
     def get_all_volume_usage(self, context, compute_host_bdms):
@@ -818,15 +820,15 @@ class FakeDriver(driver.ComputeDriver):
         return volusage
 
     def get_host_cpu_stats(self):
-        stats = {'kernel': 5664160000000L,
-                'idle': 1592705190000000L,
-                'user': 26728850000000L,
-                'iowait': 6121490000000L}
+        stats = {'kernel': 5664160000000,
+                'idle': 1592705190000000,
+                'user': 26728850000000,
+                'iowait': 6121490000000}
         stats['frequency'] = 800
         return stats
 
     def block_stats(self, instance, disk_id):
-        return [0L, 0L, 0L, 0L, None]
+        return [0, 0, 0, 0, None]
 
     def macs_for_instance(self, instance):
         macs = []
@@ -871,6 +873,11 @@ class FakeDriver(driver.ComputeDriver):
                                    host='fakerdpconsole.com',
                                    port=6969)
 
+    def get_mks_console(self, context, instance):
+        return ctype.ConsoleMKS(internal_access_path='FAKE',
+                                host='fakemksconsole.com',
+                                port=6969)
+
     def get_console_pool_info(self, console_type):
         return {'address': '127.0.0.1',
                 'username': 'fakeuser',
@@ -879,14 +886,8 @@ class FakeDriver(driver.ComputeDriver):
     def refresh_security_group_rules(self, security_group_id):
         return True
 
-    def refresh_security_group_members(self, security_group_id):
-        return True
-
     def refresh_instance_security_rules(self, instance):
         return True
-
-    def refresh_provider_fw_rules(self):
-        pass
 
     def get_available_resource(self, nodename):
         """Updates compute manager resource info on ComputeNode table.
@@ -929,8 +930,14 @@ class FakeDriver(driver.ComputeDriver):
                             migrate_data)
         return
 
-    def check_can_live_migrate_destination_cleanup(self, context,
-                                                   dest_check_data):
+    def live_migration_force_complete(self, instance):
+        return
+
+    def live_migration_abort(self, instance):
+        return
+
+    def cleanup_live_migration_destination_check(self, context,
+                                                 dest_check_data):
         return
 
     def check_can_live_migrate_destination(self, context, instance,
@@ -952,7 +959,7 @@ class FakeDriver(driver.ComputeDriver):
         return
 
     def pre_live_migration(self, context, instance, block_device_info,
-                           network_info, disk_info, migrate_data=None):
+                           network_info, disk_info, migrate_data):
         return
 
     def unfilter_instance(self, instance, network_info):
@@ -986,21 +993,6 @@ class FakeDriver(driver.ComputeDriver):
                 'host': 'fakehost'}
 
     def get_available_nodes(self, refresh=False):
-        LOG.info(_LI("ALL FAKE NODES: %s"), _FAKE_NODES)
-
-        response = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers"
-                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                            bampi_port=BAMPI_PORT,
-                                            bampi_api_base_url=BAMPI_API_BASE_URL),
-                                            auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
-        info = ''
-        for server in response.json():
-            i = "id={id}, hostname={hostname}, " \
-                "os_ip_addr={ipAddress}, " \
-                "bmc_ip_addr={bmc[ipAddress]}".format(**server)
-            info += i
-        LOG.info(_LI("ALL BARE METAL SERVERS: %s"), info)
-
         return _FAKE_NODES
 
     def instance_on_disk(self, instance):
@@ -1014,9 +1006,6 @@ class FakeDriver(driver.ComputeDriver):
 
 
 class FakeVirtAPI(virtapi.VirtAPI):
-    def provider_fw_rule_get_all(self, context):
-        return db.provider_fw_rule_get_all(context)
-
     @contextlib.contextmanager
     def wait_for_instance_event(self, instance, event_names, deadline=300,
                                 error_callback=None):
