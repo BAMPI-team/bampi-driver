@@ -408,7 +408,15 @@ class FakeDriver(driver.ComputeDriver):
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
-        LOG.info(_LI("[BAMPI] Power reset hostname=%s" % instance.hostname),
+        LOG.info(_LI("Reboot %(hostname)s, reboot_type=%(reboot_type)s"),
+                 {'hostname': instance.hostname, 'reboot_type': reboot_type},
+                 instance=instance)
+        payload = {'status': 'reset'}
+        if reboot_type == 'SOFT':
+            payload['status'] = 'cycle'
+
+        LOG.info(_LI("[BAMPI] Power %(reboot_type)s hostname=%(hostname)s"),
+                 {'hostname': instance.hostname, 'reboot_type': reboot_type},
                  instance=instance)
         try:
             r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
@@ -417,7 +425,7 @@ class FakeDriver(driver.ComputeDriver):
                                         bampi_api_base_url=BAMPI_API_BASE_URL,
                                         hostname=instance.hostname),
                              auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
-                             json={'status': 'reset'})
+                             json=payload)
             r.raise_for_status()
         except requests.exception.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
