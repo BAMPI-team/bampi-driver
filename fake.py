@@ -857,8 +857,53 @@ class FakeDriver(driver.ComputeDriver):
 
         return set(macs)
 
+
     def get_console_output(self, context, instance):
-        return 'FAKE CONSOLE OUTPUT\nANOTHER\nLAST LINE'
+
+        def _get_last_task_id(hostname):
+            try:
+                r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                            bampi_port=BAMPI_PORT,
+                                            bampi_api_base_url=BAMPI_API_BASE_URL),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                             params={'hostname': hostname})
+                r.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
+                return -1
+
+            try:
+                t_id = r.json()[-1]['id']
+            except KeyError:
+                LOG.warn(_LW("[BAMPI] Cannot fetch task history of hostname=%s" %
+                    hostname), instance=instance)
+                t_id = -1
+
+            return t_id
+
+        t_id = _get_last_task_id(instance.hostname)
+        if t_id == -1:
+            return 'EMPTY'
+
+        try:
+            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks/{task_id}/log"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        task_id=t_id),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+            r.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
+            return 'CANNOT LOAD TASK LOG'
+        else:
+            raw_log = r.json().get('log', 'NO OUTPUT')
+
+        # Post-processing log content
+        log = raw_log.replace('\\n', '\n')
+
+        return log
 
     def get_vnc_console(self, context, instance):
         return ctype.ConsoleVNC(internal_access_path='FAKE',
