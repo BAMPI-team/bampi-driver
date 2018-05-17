@@ -676,7 +676,7 @@ class FakeDriver(driver.ComputeDriver):
                 disk=flavor.root_gb)
             del self.instances[key]
         else:
-            LOG.warning(_LW("Key '%(key)s' not in instances '%(inst)s'"),
+            LOG.warn(_LW("Key '%(key)s' not in instances '%(inst)s'"),
                         {'key': key,
                          'inst': self.instances}, instance=instance)
 
