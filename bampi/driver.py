@@ -1,25 +1,6 @@
-# Copyright 2010 United States Government as represented by the
-# Administrator of the National Aeronautics and Space Administration.
-# All Rights Reserved.
-# Copyright (c) 2010 Citrix Systems, Inc.
-#
-#    Licensed under the Apache License, Version 2.0 (the "License"); you may
-#    not use this file except in compliance with the License. You may obtain
-#    a copy of the License at
-#
-#         http://www.apache.org/licenses/LICENSE-2.0
-#
-#    Unless required by applicable law or agreed to in writing, software
-#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
-#    License for the specific language governing permissions and limitations
-#    under the License.
-
 """
-A fake (in-memory) hypervisor+api.
-
-Allows nova testing w/o a hypervisor.  This module also documents the
-semantics of real hypervisor connections.
+A driver acting as a hypervisor + wrapping the BAMPI API, such that Nova may
+provision bare metal resources.
 
 """
 
@@ -55,7 +36,7 @@ CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
 
 
-_FAKE_NODES = None
+_BAMPI_NODES = None
 
 
 # BAMPI basic information
@@ -92,7 +73,7 @@ power_state_map = {
 
 
 def set_nodes(nodes):
-    """Sets FakeDriver's node.list.
+    """Sets BampiDriver's node.list.
 
     It has effect on the following methods:
         get_available_nodes()
@@ -100,20 +81,20 @@ def set_nodes(nodes):
 
     To restore the change, call restore_nodes()
     """
-    global _FAKE_NODES
-    _FAKE_NODES = nodes
+    global _BAMPI_NODES
+    _BAMPI_NODES = nodes
 
 
 def restore_nodes():
-    """Resets FakeDriver's node list modified by set_nodes().
+    """Resets BampiDriver's node list modified by set_nodes().
 
     Usually called from tearDown().
     """
-    global _FAKE_NODES
-    _FAKE_NODES = [CONF.host]
+    global _BAMPI_NODES
+    _BAMPI_NODES = [CONF.host]
 
 
-class FakeInstance(object):
+class BampiInstance(object):
 
     def __init__(self, name, state, uuid):
         self.name = name
@@ -158,7 +139,7 @@ class Resources(object):
         }
 
 
-class FakeDriver(driver.ComputeDriver):
+class BampiDriver(driver.ComputeDriver):
     capabilities = {
         "has_imagecache": False,
         "supports_recreate": False,
@@ -172,28 +153,28 @@ class FakeDriver(driver.ComputeDriver):
     memory_mb = 800000
     local_gb = 600000
 
-    """Fake hypervisor driver."""
+    """Hypervisor driver for BAMPI - bare-metal provisioning"""
 
     def __init__(self, virtapi, read_only=False):
-        super(FakeDriver, self).__init__(virtapi)
+        super(BampiDriver, self).__init__(virtapi)
         self.instances = {}
         self.resources = Resources(
             vcpus=self.vcpus,
             memory_mb=self.memory_mb,
             local_gb=self.local_gb)
         self.host_status_base = {
-          'hypervisor_type': 'fake',
+          'hypervisor_type': 'bampi',
           'hypervisor_version': versionutils.convert_version_to_int('1.0'),
           'hypervisor_hostname': CONF.host,
           'cpu_info': {},
           'disk_available_least': 0,
-          'supported_instances': [(arch.X86_64, hv_type.FAKE, vm_mode.HVM)],
+          'supported_instances': [(arch.X86_64, hv_type.BAREMETAL, vm_mode.HVM)],
           'numa_topology': None,
           }
         self._mounts = {}
         self._interfaces = {}
         self.active_migrations = {}
-        if not _FAKE_NODES:
+        if not _BAMPI_NODES:
             set_nodes([CONF.host])
 
     def init_host(self, host):
@@ -222,8 +203,8 @@ class FakeDriver(driver.ComputeDriver):
             vcpus=flavor.vcpus,
             mem=flavor.memory_mb,
             disk=flavor.root_gb)
-        fake_instance = FakeInstance(instance.name, state, uuid)
-        self.instances[uuid] = fake_instance
+        bampi_instance = BampiInstance(instance.name, state, uuid)
+        self.instances[uuid] = bampi_instance
 
         # XXX: Where dirty hack begins
         def _get_task_status(t_id):
@@ -724,7 +705,7 @@ class FakeDriver(driver.ComputeDriver):
 
     def get_info(self, instance):
         if instance.uuid not in self.instances:
-            # Instance not found may caused by fake driver memory lost...
+            # Instance not found may caused by bampi driver memory lost...
             try:
                 r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
                                     .format(bampi_ip_addr=BAMPI_IP_ADDR,
@@ -740,9 +721,9 @@ class FakeDriver(driver.ComputeDriver):
                 p_st = r.json()['status']
                 state = power_state_map[p_st]
 
-                # Construct the lost fake instance...
-                fake_instance = FakeInstance(instance.name, state, instance.uuid)
-                self.instances[instance.uuid] = fake_instance
+                # Construct the lost bampi instance...
+                bampi_instance = BampiInstance(instance.name, state, instance.uuid)
+                self.instances[instance.uuid] = bampi_instance
 
                 return hardware.InstanceInfo(state=state,
                                              max_mem_kb=0,
@@ -793,15 +774,15 @@ class FakeDriver(driver.ComputeDriver):
         }
 
     def get_instance_diagnostics(self, instance):
-        diags = diagnostics.Diagnostics(state='running', driver='fake',
-                hypervisor_os='fake-os', uptime=46664, config_drive=True)
+        diags = diagnostics.Diagnostics(state='running', driver='bampi',
+                hypervisor_os='bampi-os', uptime=46664, config_drive=True)
         diags.add_cpu(time=17300000000)
         diags.add_nic(mac_address='01:23:45:67:89:ab',
                       rx_packets=26701,
                       rx_octets=2070139,
                       tx_octets=140208,
                       tx_packets = 662)
-        diags.add_disk(id='fake-disk-id',
+        diags.add_disk(id='bampi-disk-id',
                        read_bytes=262144,
                        read_requests=112,
                        write_bytes=5778432,
@@ -915,37 +896,6 @@ class FakeDriver(driver.ComputeDriver):
 
         return log
 
-    def get_vnc_console(self, context, instance):
-        return ctype.ConsoleVNC(internal_access_path='FAKE',
-                                host='fakevncconsole.com',
-                                port=6969)
-
-    def get_spice_console(self, context, instance):
-        return ctype.ConsoleSpice(internal_access_path='FAKE',
-                                  host='fakespiceconsole.com',
-                                  port=6969,
-                                  tlsPort=6970)
-
-    def get_rdp_console(self, context, instance):
-        return ctype.ConsoleRDP(internal_access_path='FAKE',
-                                host='fakerdpconsole.com',
-                                port=6969)
-
-    def get_serial_console(self, context, instance):
-        return ctype.ConsoleSerial(internal_access_path='FAKE',
-                                   host='fakerdpconsole.com',
-                                   port=6969)
-
-    def get_mks_console(self, context, instance):
-        return ctype.ConsoleMKS(internal_access_path='FAKE',
-                                host='fakemksconsole.com',
-                                port=6969)
-
-    def get_console_pool_info(self, console_type):
-        return {'address': '127.0.0.1',
-                'username': 'fakeuser',
-                'password': 'fakepassword'}
-
     def refresh_security_group_rules(self, security_group_id):
         return True
 
@@ -969,7 +919,7 @@ class FakeDriver(driver.ComputeDriver):
                 'sockets': 4,
                 }),
             ])
-        if nodename not in _FAKE_NODES:
+        if nodename not in _BAMPI_NODES:
             return {}
 
         host_status = self.host_status_base.copy()
@@ -1050,13 +1000,8 @@ class FakeDriver(driver.ComputeDriver):
             return 'enabled'
         return 'disabled'
 
-    def get_volume_connector(self, instance):
-        return {'ip': CONF.my_block_storage_ip,
-                'initiator': 'fake',
-                'host': 'fakehost'}
-
     def get_available_nodes(self, refresh=False):
-        return _FAKE_NODES
+        return _BAMPI_NODES
 
     def instance_on_disk(self, instance):
         return False
@@ -1068,22 +1013,10 @@ class FakeDriver(driver.ComputeDriver):
         pass
 
 
-class FakeVirtAPI(virtapi.VirtAPI):
+class BampiVirtAPI(virtapi.VirtAPI):
     @contextlib.contextmanager
     def wait_for_instance_event(self, instance, event_names, deadline=300,
                                 error_callback=None):
         # NOTE(danms): Don't actually wait for any events, just
         # fall through
         yield
-
-
-class SmallFakeDriver(FakeDriver):
-    # The api samples expect specific cpu memory and disk sizes. In order to
-    # allow the FakeVirt driver to be used outside of the unit tests, provide
-    # a separate class that has the values expected by the api samples. So
-    # instead of requiring new samples every time those
-    # values are adjusted allow them to be overwritten here.
-
-    vcpus = 1
-    memory_mb = 8192
-    local_gb = 1028
