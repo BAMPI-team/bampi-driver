@@ -59,30 +59,30 @@ _FAKE_NODES = None
 
 
 # BAMPI basic information
-BAMPI_IP_ADDR = '100.73.11.39'
-BAMPI_PORT = 8080
+BAMPI_IP_ADDR = 'bampi.bampi.net'
+BAMPI_PORT = 80
 BAMPI_API_BASE_URL = '/bampi/api/kddi/v1'
 BAMPI_USER = 'admin'
 BAMPI_PASS = 'admin'
 
 # Peregrine basic information
-PEREGRINE_IP_ADDR = '100.73.11.32'
+PEREGRINE_IP_ADDR = 'peregrine-h.bampi.net'
 PEREGRINE_PORT = 8282
 PEREGRINE_API_BASE_URL = '/controller/nb/v3'
 PEREGRINE_USER = 'admin'
 PEREGRINE_PASS = 'admin'
 
 # HaaS-core basic information
-HAAS_CORE_IP_ADDR = '100.73.11.33'
+HAAS_CORE_IP_ADDR = 'hcore-1.bampi.net'
 HAAS_CORE_PORT = 8080
 HAAS_CORE_API_BASE_URL = '/haas-core/api'
 OS_USER = 'admin'
-OS_PASS = 'openstack'
+OS_PASS = 'password'
 
-DUMMY_IMG_NAME = 'install-less_image.iso'
+DUMMY_IMG_NAME = 'clonezilla-live-install-less_image.iso'
 
 # Network configuration for provisioning
-PROVISION_VLAN_ID = 5
+PROVISION_VLAN_ID = 41
 
 # Power state mapping
 power_state_map = {
