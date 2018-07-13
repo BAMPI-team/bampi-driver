@@ -841,20 +841,29 @@ class FakeDriver(driver.ComputeDriver):
 
     def macs_for_instance(self, instance):
         macs = []
-        try:
-            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
-                                        hostname=instance.hostname),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
-            r.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
-            return None
+        LOG.info(_LI("[PEREGRINE] REQ => getAllHaasServerInfo..."),
+                 instance=instance)
+        r = requests.get("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/v2v/getAllHaasServerInfo"
+                            .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
+                                    peregrine_port=PEREGRINE_PORT,
+                                    peregrine_api_base_url=PEREGRINE_API_BASE_URL),
+                          auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
+        if r.status_code == 200:
+            LOG.info(_LI("[PEREGRINE] HaaS server info retrieved successfully."),
+                     instance=instance)
         else:
-            mac = r.json()['macAddress']
-            macs.append(mac)
+            LOG.error(_LE("[PEREGRINE] ret_code=%s"),
+                      r.status_code,
+                      instance=instance)
+            raise exception.NovaException("Cannot retrieve HaaS server info from Peregrine-H.")
+
+        for info in r.json()['bulkRequest']:
+            if info['admin_server_name'] != instance.hostname:
+                continue
+            for port_group in info['port_group_list']:
+                for port in port_group['port_list']:
+                    LOG.info(_LI("Found port MAC: %s."), port['port_mac'], instance=instance)
+                    macs.append(port['port_mac'])
 
         return set(macs)
 
