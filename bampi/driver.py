@@ -333,55 +333,89 @@ class BampiDriver(driver.ComputeDriver):
         LOG.info(_LI("[BAMPI] All provision tasks have ended successfully."),
                  instance=instance)
 
-        # Get segmentation ID of desired tenant network from HaaS-core
-        network_provision_payload = {}
-        ni = jsonutils.loads(network_info.json())
-        tnid = ni[0]['network']['id']
-        LOG.info(_LI("tenant network id = %s"), tnid, instance=instance)
-        LOG.info(_LI("[HAAS_CORE] REQ => network_detail..."), instance=instance)
-        r = requests.get("http://{haas_core_ip_addr}:{haas_core_port}{haas_core_api_base_url}/network/get/{tenant_network_id}"
-                            .format(haas_core_ip_addr=HAAS_CORE_IP_ADDR,
-                                    haas_core_port=HAAS_CORE_PORT,
-                                    haas_core_api_base_url=HAAS_CORE_API_BASE_URL,
-                                    tenant_network_id=tnid),
-                         auth=HTTPBasicAuth(OS_USER, OS_PASS))
-        if r.status_code == 200:
-            data = r.json()['data']
-            nd = jsonutils.loads(data)
-            segmentation_id = nd['provider:segmentation_id']
-            LOG.info(_LI("segmentation id = %s"),
-                     segmentation_id, instance=instance)
-            network_provision_payload = {
-                'provision_vlan': {
-                    'admin_server_name': instance.display_name,
-                    'port_group_name': 'PG-1',
-                    'untagged_vlan': segmentation_id,
-                    'tagged_vlans': []
-                }
-            }
-        else:
-            LOG.error(_LE("[HAAS_CORE] ret_code=%s"),
-                      r.status_code,
-                      instance=instance)
-            raise exception.NovaException("Cannot get segmentation_id from HaaS-core. Abort instance spawning...")
-
-        # Change VLAN ID from provision network to tenant network
-        LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."),
+        # Retrieve network information from Peregrine-H for target server
+        LOG.info(_LI("[PEREGRINE] REQ => getAllHaasServerInfo..."),
                  instance=instance)
-        r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
+        r = requests.get("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/v2v/getAllHaasServerInfo"
                             .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
                                     peregrine_port=PEREGRINE_PORT,
                                     peregrine_api_base_url=PEREGRINE_API_BASE_URL),
-                          auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
-                          json=network_provision_payload)
+                          auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
         if r.status_code == 200:
-            LOG.info(_LI("[PEREGRINE] Tenant network set successfully."),
+            LOG.info(_LI("[PEREGRINE] HaaS server info retrieved successfully."),
                      instance=instance)
         else:
             LOG.error(_LE("[PEREGRINE] ret_code=%s"),
                       r.status_code,
                       instance=instance)
-            raise exception.NovaException("Cannot set tenant VLAN using Peregrine-H. Abort instance spawning...")
+            raise exception.NovaException("Cannot retrieve HaaS server info from Peregrine-H.")
+
+        # Construct reverse map of MAC address (key) and port group name
+        # (value)
+        mac_pg_map = {}
+        for info in r.json()['bulkRequest']:
+            if info['admin_server_name'] != instance.hostname:
+                continue
+            for port_group in info['port_group_list']:
+                for port in port_group['port_list']:
+                    LOG.info(_LI("Found port MAC: %s with port group name: %s."),
+                             port['port_mac'], port_group['port_group_name'],
+                             instance=instance)
+                    mac_pg_map[port['port_mac']] = port_group['port_group_name']
+
+        network_provision_payload = {}
+        ni = jsonutils.loads(network_info.json())
+        for vif in ni:
+            tnid = vif['network']['id']
+            mac_address = vif['address']
+            LOG.info(_LI("tenant network id = %s, mac address = %s"),
+                     tnid, mac_address, instance=instance)
+
+            # Get segmentation ID of desired tenant networks from HaaS-core
+            LOG.info(_LI("[HAAS_CORE] REQ => network_detail..."), instance=instance)
+            r = requests.get("http://{haas_core_ip_addr}:{haas_core_port}{haas_core_api_base_url}/network/get/{tenant_network_id}"
+                                .format(haas_core_ip_addr=HAAS_CORE_IP_ADDR,
+                                        haas_core_port=HAAS_CORE_PORT,
+                                        haas_core_api_base_url=HAAS_CORE_API_BASE_URL,
+                                        tenant_network_id=tnid),
+                             auth=HTTPBasicAuth(OS_USER, OS_PASS))
+            if r.status_code == 200:
+                data = r.json()['data']
+                nd = jsonutils.loads(data)
+                segmentation_id = nd['provider:segmentation_id']
+                LOG.info(_LI("segmentation id = %s"),
+                         segmentation_id, instance=instance)
+                network_provision_payload = {
+                    'provision_vlan': {
+                        'admin_server_name': instance.display_name,
+                        'port_group_name': mac_pg_map[mac_address],
+                        'untagged_vlan': segmentation_id,
+                        'tagged_vlans': []
+                    }
+                }
+            else:
+                LOG.error(_LE("[HAAS_CORE] ret_code=%s"),
+                          r.status_code,
+                          instance=instance)
+                raise exception.NovaException("Cannot get segmentation_id from HaaS-core. Abort instance spawning...")
+
+            # Provision VLANs for tenant networks
+            LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."),
+                     instance=instance)
+            r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
+                                .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
+                                        peregrine_port=PEREGRINE_PORT,
+                                        peregrine_api_base_url=PEREGRINE_API_BASE_URL),
+                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
+                              json=network_provision_payload)
+            if r.status_code == 200:
+                LOG.info(_LI("[PEREGRINE] Tenant network set successfully."),
+                         instance=instance)
+            else:
+                LOG.error(_LE("[PEREGRINE] ret_code=%s"),
+                          r.status_code,
+                          instance=instance)
+                raise exception.NovaException("Cannot set tenant VLAN using Peregrine-H. Abort instance spawning...")
 
     def snapshot(self, context, instance, image_id, update_task_state):
         if instance.uuid not in self.instances:
