@@ -584,32 +584,63 @@ class BampiDriver(driver.ComputeDriver):
 
         key = instance.uuid
         if key in self.instances:
-            # Switch back to provision network
-            network_provision_payload = {
-                'provision_vlan': {
-                    'admin_server_name': instance.display_name,
-                    'port_group_name': 'PG-1',
-                    'untagged_vlan': PROVISION_VLAN_ID,
-                    'tagged_vlans': []
-                }
-            }
-            # Change VLAN ID from provision network to tenant network
-            LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."),
+            # Retrieve network information from Peregrine-H for target server
+            LOG.info(_LI("[PEREGRINE] REQ => getAllHaasServerInfo..."),
                      instance=instance)
-            r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
+            r = requests.get("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/v2v/getAllHaasServerInfo"
                                 .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
                                         peregrine_port=PEREGRINE_PORT,
                                         peregrine_api_base_url=PEREGRINE_API_BASE_URL),
-                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
-                              json=network_provision_payload)
+                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
             if r.status_code == 200:
-                LOG.info(_LI("[PEREGRINE] Provision network set successfully."),
+                LOG.info(_LI("[PEREGRINE] HaaS server info retrieved successfully."),
                          instance=instance)
             else:
                 LOG.error(_LE("[PEREGRINE] ret_code=%s"),
                           r.status_code,
                           instance=instance)
-                raise exception.NovaException("Cannot set provision VLAN using Peregrine-H. Abort instance spawning...")
+                raise exception.NovaException("Cannot retrieve HaaS server info from Peregrine-H.")
+
+            # Construct port group name list
+            pgn_list = []
+            for info in r.json()['bulkRequest']:
+                if info['admin_server_name'] == instance.hostname:
+                    for port_group in info['port_group_list']:
+                        LOG.info(_LI("Found port group name: %s."),
+                                 port_group['port_group_name'],
+                                 instance=instance)
+                        pgn_list.append(port_group['port_group_name'])
+                    break
+
+            # Switch back to provision network
+            network_provision_payload = {
+                'provision_vlan': {
+                    'admin_server_name': instance.display_name,
+                    'port_group_name': '',
+                    'untagged_vlan': PROVISION_VLAN_ID,
+                    'tagged_vlans': []
+                }
+            }
+            for pgn in pgn_list:
+                network_provision_payload['provision_vlan']['port_group_name'] = pgn
+
+                # Change VLAN ID from provision network to tenant network
+                LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."),
+                         instance=instance)
+                r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
+                                    .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
+                                            peregrine_port=PEREGRINE_PORT,
+                                            peregrine_api_base_url=PEREGRINE_API_BASE_URL),
+                                  auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
+                                  json=network_provision_payload)
+                if r.status_code == 200:
+                    LOG.info(_LI("[PEREGRINE] Provision network set successfully."),
+                             instance=instance)
+                else:
+                    LOG.error(_LE("[PEREGRINE] ret_code=%s"),
+                              r.status_code,
+                              instance=instance)
+                    raise exception.NovaException("Cannot set provision VLAN using Peregrine-H. Abort instance spawning...")
 
             # Cleanup procedure
             default_tasks_q = [
