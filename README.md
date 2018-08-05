@@ -20,7 +20,7 @@ Installation Guide
 Reference for BAMPI Driver Operation Variables
 ---------------------------------------------
 
-### BAMPI basic information
+### BAMPI Basic Information
 
 ```
 BAMPI_IP_ADDR = '<IP_ADDR>'
@@ -28,9 +28,10 @@ BAMPI_PORT = <PORT>
 BAMPI_API_BASE_URL = '<URL>'
 BAMPI_USER = '<USERNAME>'
 BAMPI_PASS = '<PASSWORD>'
+DUMMY_IMG_NAME = 'IMG_NAME'
 ```
 
-### Peregrine basic information
+### Peregrine Basic Information
 
 ```
 PEREGRINE_IP_ADDR = '<IP_ADDR>'
@@ -40,7 +41,7 @@ PEREGRINE_USER = '<USERNAME'
 PEREGRINE_PASS = '<PASSWORD>'
 ```
 
-### HaaS-core basic information
+### HaaS-core Basic Information
 
 ```
 HAAS_CORE_IP_ADDR = '<IP_ADDR>'
@@ -48,11 +49,9 @@ HAAS_CORE_PORT = <PORT>
 HAAS_CORE_API_BASE_URL = '<URL>'
 OS_USER = '<USERNAME>'
 OS_PASS = '<PASSWORD>'
-
-DUMMY_IMG_NAME = 'IMG_NAME'
 ```
 
-### Network configuration for provisioning
+### Network Configuration for Provisioning
 
 ```
 PROVISION_VLAN_ID = <VLAN_ID>
