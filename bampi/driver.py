@@ -163,7 +163,7 @@ class BampiDriver(driver.ComputeDriver):
             memory_mb=self.memory_mb,
             local_gb=self.local_gb)
         self.host_status_base = {
-          'hypervisor_type': 'bampi',
+          'hypervisor_type': 'baremetal',
           'hypervisor_version': versionutils.convert_version_to_int('1.0'),
           'hypervisor_hostname': CONF.host,
           'cpu_info': {},
