@@ -560,11 +560,93 @@ class BampiDriver(driver.ComputeDriver):
     def resume(self, context, instance, network_info, block_device_info=None):
         pass
 
+    def _destroy(self, instance):
+        self.power_off(instance)
+
+        # Retrieve network information from Peregrine-H for target server
+        LOG.info(_LI("[PEREGRINE] REQ => getAllHaasServerInfo..."),
+                 instance=instance)
+        r = requests.get("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/v2v/getAllHaasServerInfo"
+                            .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
+                                    peregrine_port=PEREGRINE_PORT,
+                                    peregrine_api_base_url=PEREGRINE_API_BASE_URL),
+                          auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
+        if r.status_code == 200:
+            LOG.info(_LI("[PEREGRINE] HaaS server info retrieved successfully."),
+                     instance=instance)
+        else:
+            LOG.error(_LE("[PEREGRINE] ret_code=%s"),
+                      r.status_code,
+                      instance=instance)
+            raise exception.NovaException("Cannot retrieve HaaS server info from Peregrine-H.")
+
+        # Construct port group name list
+        pgn_list = []
+        for info in r.json()['bulkRequest']:
+            if info['admin_server_name'] == instance.hostname:
+                for port_group in info['port_group_list']:
+                    LOG.info(_LI("Found port group name: %s."),
+                             port_group['port_group_name'],
+                             instance=instance)
+                    pgn_list.append(port_group['port_group_name'])
+                break
+
+        # Switch back to provision network
+        network_provision_payload = {
+            'provision_vlan': {
+                'admin_server_name': instance.display_name,
+                'port_group_name': '',
+                'untagged_vlan': PROVISION_VLAN_ID,
+                'tagged_vlans': []
+            }
+        }
+        for pgn in pgn_list:
+            network_provision_payload['provision_vlan']['port_group_name'] = pgn
+
+            # Change VLAN ID from provision network to tenant network
+            LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."),
+                     instance=instance)
+            r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
+                                .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
+                                        peregrine_port=PEREGRINE_PORT,
+                                        peregrine_api_base_url=PEREGRINE_API_BASE_URL),
+                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
+                              json=network_provision_payload)
+            if r.status_code == 200:
+                LOG.info(_LI("[PEREGRINE] Provision network set successfully."),
+                         instance=instance)
+            else:
+                LOG.error(_LE("[PEREGRINE] ret_code=%s"),
+                          r.status_code,
+                          instance=instance)
+                raise exception.NovaException("Cannot set provision VLAN using Peregrine-H. Abort instance spawning...")
+
+
     def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None):
 
+        key = instance.uuid
+        if key in self.instances:
+            self._destroy(instance)
+            self.cleanup(context, instance, network_info, block_device_info,
+                         destroy_disks, migrate_data)
+        else:
+            LOG.warn(_LW("Key '%(key)s' not in instances '%(inst)s'"),
+                        {'key': key,
+                         'inst': self.instances}, instance=instance)
+
+    def _undefine(self, instance):
+        flavor = instance.flavor
+        self.resources.release(
+            vcpus=flavor.vcpus,
+            mem=flavor.memory_mb,
+            disk=flavor.root_gb)
+        del self.instances[instance.uuid]
+
+    def cleanup(self, context, instance, network_info, block_device_info=None,
+                destroy_disks=True, migrate_data=None, destroy_vifs=True):
         def _get_task_status(t_id):
-            r = requests.get("http://{bampi_ip_addr}:{bampi_port}""{bampi_api_base_url}/tasks/{task_id}"
+            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks/{task_id}"
                                 .format(bampi_ip_addr=BAMPI_IP_ADDR,
                                         bampi_port=BAMPI_PORT,
                                         bampi_api_base_url=BAMPI_API_BASE_URL,
@@ -593,162 +675,80 @@ class BampiDriver(driver.ComputeDriver):
                           instance=instance)
                 raise loopingcall.LoopingCallDone(False)
 
-        key = instance.uuid
-        if key in self.instances:
-            # Retrieve network information from Peregrine-H for target server
-            LOG.info(_LI("[PEREGRINE] REQ => getAllHaasServerInfo..."),
-                     instance=instance)
-            r = requests.get("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/v2v/getAllHaasServerInfo"
-                                .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
-                                        peregrine_port=PEREGRINE_PORT,
-                                        peregrine_api_base_url=PEREGRINE_API_BASE_URL),
-                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
-            if r.status_code == 200:
-                LOG.info(_LI("[PEREGRINE] HaaS server info retrieved successfully."),
-                         instance=instance)
-            else:
-                LOG.error(_LE("[PEREGRINE] ret_code=%s"),
-                          r.status_code,
-                          instance=instance)
-                raise exception.NovaException("Cannot retrieve HaaS server info from Peregrine-H.")
-
-            # Construct port group name list
-            pgn_list = []
-            for info in r.json()['bulkRequest']:
-                if info['admin_server_name'] == instance.hostname:
-                    for port_group in info['port_group_list']:
-                        LOG.info(_LI("Found port group name: %s."),
-                                 port_group['port_group_name'],
-                                 instance=instance)
-                        pgn_list.append(port_group['port_group_name'])
-                    break
-
-            # Switch back to provision network
-            network_provision_payload = {
-                'provision_vlan': {
-                    'admin_server_name': instance.display_name,
-                    'port_group_name': '',
-                    'untagged_vlan': PROVISION_VLAN_ID,
-                    'tagged_vlans': []
-                }
+        # Cleanup procedure
+        default_tasks_q = [
+            {
+                'taskType': 'change_boot_mode',
+                'taskProfile': 'PXE'
+            },
+            {
+                'taskType': 'configure_raid',
+                'taskProfile': 'clean_up_conf'
             }
-            for pgn in pgn_list:
-                network_provision_payload['provision_vlan']['port_group_name'] = pgn
+        ]
+        for task in default_tasks_q:
+            task['hostname'] = instance.display_name
 
-                # Change VLAN ID from provision network to tenant network
-                LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."),
-                         instance=instance)
-                r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
-                                    .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
-                                            peregrine_port=PEREGRINE_PORT,
-                                            peregrine_api_base_url=PEREGRINE_API_BASE_URL),
-                                  auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
-                                  json=network_provision_payload)
-                if r.status_code == 200:
-                    LOG.info(_LI("[PEREGRINE] Provision network set successfully."),
-                             instance=instance)
-                else:
-                    LOG.error(_LE("[PEREGRINE] ret_code=%s"),
-                              r.status_code,
-                              instance=instance)
-                    raise exception.NovaException("Cannot set provision VLAN using Peregrine-H. Abort instance spawning...")
-
-            # Cleanup procedure
-            default_tasks_q = [
-                {
-                    'taskType': 'change_boot_mode',
-                    'taskProfile': 'PXE'
-                },
-                {
-                    'taskType': 'configure_raid',
-                    'taskProfile': 'clean_up_conf'
-                }
-            ]
-            for task in default_tasks_q:
-                task['hostname'] = instance.display_name
-
-                # Requesting outer service to execute the task
-                LOG.info(_LI("[BAMPI] REQ => Starting cleanup task %s..."),
-                         task['taskType'], instance=instance)
-                r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
-                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                            bampi_port=BAMPI_PORT,
-                                            bampi_api_base_url=BAMPI_API_BASE_URL),
-                                  auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json=task)
-                try:
-                    t_id = r.json()['id']
-                except KeyError:
-                    # If we cannot find 'id' in return json...
-                    LOG.error(_LE("[BAMPI] RESP (cleanup) => task_type=%s, task_profile=%s, ret_code=%s"),
-                              task['taskType'], task['taskProfile'], r.status_code,
-                              instance=instance)
-                    return
-                else:
-                    LOG.info(_LI("[BAMPI] RESP (cleanup) => ret_code=%s, task_id=%s"),
-                             r.status_code, t_id, instance=instance)
-
-                # Polling for task status
-                time = loopingcall.FixedIntervalLoopingCall(_wait_for_ready)
-                ret = time.start(interval=5).wait()
-
-                # Task failed, abort destroying
-                if ret == False:
-                    raise exception.NovaException("Cleanup task failed. Abort instance destroying...")
-                else:
-                    LOG.info(_LI("[BAMPI] Cleanup task %s:%s has ended successfully."),
-                             task['taskType'],
-                             task['taskProfile'],
-                             instance=instance)
-
-            LOG.info(_LI("[BAMPI] All cleanup tasks have ended successfully."),
-                     instance=instance)
-            LOG.info(_LI("[HAAS_CORE] REQ => Mark server as available..."),
-                     instance=instance)
-            r = requests.put('http://{haas_core_ip_addr}:{haas_core_port}{haas_core_api_base_url}/servers/{hostname}/available'
-                                .format(haas_core_ip_addr=HAAS_CORE_IP_ADDR,
-                                        haas_core_port=HAAS_CORE_PORT,
-                                        haas_core_api_base_url=HAAS_CORE_API_BASE_URL,
-                                        hostname=instance.hostname),
-                             auth=HTTPBasicAuth(OS_USER, OS_PASS))
-
-            # Boot into disposable OS to stand-by
-            LOG.info(_LI("[BAMPI] Power on hostname=%s to stand-by" % instance.hostname),
-                     instance=instance)
+            # Requesting outer service to execute the task
+            LOG.info(_LI("[BAMPI] REQ => Starting cleanup task %s..."),
+                     task['taskType'], instance=instance)
+            r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL),
+                              auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json=task)
             try:
-                r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
-                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                            bampi_port=BAMPI_PORT,
-                                            bampi_api_base_url=BAMPI_API_BASE_URL,
-                                            hostname=instance.hostname),
-                                 auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
-                                 json={'status': 'on'})
-                r.raise_for_status()
-            except requests.exceptions.HTTPError as e:
-                LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
+                t_id = r.json()['id']
+            except KeyError:
+                # If we cannot find 'id' in return json...
+                LOG.error(_LE("[BAMPI] RESP (cleanup) => task_type=%s, task_profile=%s, ret_code=%s"),
+                          task['taskType'], task['taskProfile'], r.status_code,
+                          instance=instance)
+                return
+            else:
+                LOG.info(_LI("[BAMPI] RESP (cleanup) => ret_code=%s, task_id=%s"),
+                         r.status_code, t_id, instance=instance)
 
-            # Back to fake driver default flow
-            flavor = instance.flavor
-            self.resources.release(
-                vcpus=flavor.vcpus,
-                mem=flavor.memory_mb,
-                disk=flavor.root_gb)
-            del self.instances[key]
-        else:
-            LOG.warn(_LW("Key '%(key)s' not in instances '%(inst)s'"),
-                        {'key': key,
-                         'inst': self.instances}, instance=instance)
+            # Polling for task status
+            time = loopingcall.FixedIntervalLoopingCall(_wait_for_ready)
+            ret = time.start(interval=5).wait()
 
-    def _undefine_domain(self, instance):
-        flavor = instance.flavor
-        self.resources.release(
-            vcpus=flavor.vcpus,
-            mem=flavor.memory_mb,
-            disk=flavor.root_gb)
-        del self.instances[instance.uuid]
+            # Task failed, abort destroying
+            if ret == False:
+                raise exception.NovaException("Cleanup task failed. Abort instance destroying...")
+            else:
+                LOG.info(_LI("[BAMPI] Cleanup task %s:%s has ended successfully."),
+                         task['taskType'],
+                         task['taskProfile'],
+                         instance=instance)
 
-    def cleanup(self, context, instance, network_info, block_device_info=None,
-                destroy_disks=True, migrate_data=None, destroy_vifs=True):
-        pass
+        LOG.info(_LI("[BAMPI] All cleanup tasks have ended successfully."),
+                 instance=instance)
+        LOG.info(_LI("[HAAS_CORE] REQ => Mark server as available..."),
+                 instance=instance)
+        r = requests.put('http://{haas_core_ip_addr}:{haas_core_port}{haas_core_api_base_url}/servers/{hostname}/available'
+                            .format(haas_core_ip_addr=HAAS_CORE_IP_ADDR,
+                                    haas_core_port=HAAS_CORE_PORT,
+                                    haas_core_api_base_url=HAAS_CORE_API_BASE_URL,
+                                    hostname=instance.hostname),
+                         auth=HTTPBasicAuth(OS_USER, OS_PASS))
+
+        # Boot into disposable OS to stand-by
+        LOG.info(_LI("[BAMPI] Power on hostname=%s to stand-by" % instance.hostname),
+                 instance=instance)
+        try:
+            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        hostname=instance.hostname),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                             json={'status': 'on'})
+            r.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
+
+        self._undefine(instance)
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       disk_bus=None, device_type=None, encryption=None):
@@ -1056,7 +1056,7 @@ class BampiDriver(driver.ComputeDriver):
         """Confirms a resize/migration, destroying the source VM."""
         LOG.info(_LI("METHOD CONFIRM_MIGRATION START"), instance=instance)
         if instance.host != CONF.host:
-            self._undefine_domain(instance)
+            self._undefine(instance)
             self.unplug_vifs(instance, network_info)
             self.unfilter_instance(instance, network_info)
 
