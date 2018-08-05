@@ -142,7 +142,7 @@ class Resources(object):
 class BampiDriver(driver.ComputeDriver):
     capabilities = {
         "has_imagecache": False,
-        "supports_recreate": False,
+        "supports_recreate": True,
         "supports_migrate_to_same_host": False,
         "supports_attach_interface": False
     }
@@ -193,6 +193,17 @@ class BampiDriver(driver.ComputeDriver):
     def unplug_vifs(self, instance, network_info):
         """Unplug VIFs from networks."""
         pass
+
+    def rebuild(self, context, instance, image_meta, injected_files,
+                admin_password, bdms, detach_block_devices,
+                attach_block_devices, network_info=None,
+                recreate=False, block_device_info=None,
+                preserve_ephemeral=False):
+        """Destroy and re-make this instance."""
+        LOG.info(_LI("METHOD REBUILD START"), instance=instance)
+        instance.task_state = task_states.REBUILD_SPAWNING
+        instance.save(expected_task_state=[task_states.REBUILDING])
+        LOG.info(_LI("METHOD REBUILD END"), instance=instance)
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
@@ -727,6 +738,14 @@ class BampiDriver(driver.ComputeDriver):
                         {'key': key,
                          'inst': self.instances}, instance=instance)
 
+    def _undefine_domain(self, instance):
+        flavor = instance.flavor
+        self.resources.release(
+            vcpus=flavor.vcpus,
+            mem=flavor.memory_mb,
+            disk=flavor.root_gb)
+        del self.instances[instance.uuid]
+
     def cleanup(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None, destroy_vifs=True):
         pass
@@ -1034,7 +1053,12 @@ class BampiDriver(driver.ComputeDriver):
         return
 
     def confirm_migration(self, migration, instance, network_info):
-        return
+        """Confirms a resize/migration, destroying the source VM."""
+        LOG.info(_LI("METHOD CONFIRM_MIGRATION START"), instance=instance)
+        if instance.host != CONF.host:
+            self._undefine_domain(instance)
+            self.unplug_vifs(instance, network_info)
+            self.unfilter_instance(instance, network_info)
 
     def pre_live_migration(self, context, instance, block_device_info,
                            network_info, disk_info, migrate_data):
@@ -1064,6 +1088,9 @@ class BampiDriver(driver.ComputeDriver):
         if enabled:
             return 'enabled'
         return 'disabled'
+
+    def get_volume_connector(self, instance):
+        pass
 
     def get_available_nodes(self, refresh=False):
         return _BAMPI_NODES
