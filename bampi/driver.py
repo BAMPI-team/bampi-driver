@@ -453,11 +453,20 @@ class BampiDriver(driver.ComputeDriver):
                               auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
                               json=swport_payload)
             if r.status_code == 200:
-                LOG.info(_LI("[PEREGRINE] Unused switch port "
-                         "%(sw_ip)s:%(sw_port)s shutdown successfully."),
-                         {'sw_ip': mac_map[mac]['sw_ip'],
-                          'sw_port': mac_map[mac]['sw_port']},
-                         instance=instance)
+                if r.json()['output']['set-port-state-off-result'] == 'FAIL':
+                    LOG.error(_LE("[PEREGRINE] Failed to set "
+                                  "%(sw_ip)s:%(sw_port)s state off."),
+                              {'sw_ip': mac_map[mac]['sw_ip'],
+                               'sw_port': mac_map[mac]['sw_port']},
+                              instance=instance)
+                    raise exception.NovaException("Cannot shutdown switch port "
+                            "using Peregrine-H. Abort instance spawning...")
+                else:
+                    LOG.info(_LI("[PEREGRINE] Unused switch port "
+                             "%(sw_ip)s:%(sw_port)s shutdown successfully."),
+                             {'sw_ip': mac_map[mac]['sw_ip'],
+                              'sw_port': mac_map[mac]['sw_port']},
+                             instance=instance)
             else:
                 LOG.error(_LE("[PEREGRINE] ret_code=%s"),
                           r.status_code,
@@ -676,11 +685,20 @@ class BampiDriver(driver.ComputeDriver):
                               auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
                               json=swport_payload)
             if r.status_code == 200:
-                LOG.info(_LI("[PEREGRINE] Switch port "
-                         "%(sw_ip)s:%(sw_port)s no shutdown successfully."),
-                         {'sw_ip': pgn_map[pgn]['sw_ip'],
-                          'sw_port': pgn_map[pgn]['sw_port']},
-                         instance=instance)
+                if r.json()['output']['set-port-state-on-result'] == 'FAIL':
+                    LOG.error(_LE("[PEREGRINE] Failed to set "
+                                  "%(sw_ip)s:%(sw_port)s state on."),
+                              {'sw_ip': pgn_map[pgn]['sw_ip'],
+                               'sw_port': pgn_map[pgn]['sw_port']},
+                              instance=instance)
+                    raise exception.NovaException("Cannot shutdown switch port "
+                            "using Peregrine-H. Abort instance spawning...")
+                else:
+                    LOG.info(_LI("[PEREGRINE] Switch port "
+                             "%(sw_ip)s:%(sw_port)s no shutdown successfully."),
+                             {'sw_ip': pgn_map[pgn]['sw_ip'],
+                              'sw_port': pgn_map[pgn]['sw_port']},
+                             instance=instance)
             else:
                 LOG.error(_LE("[PEREGRINE] ret_code=%s"),
                           r.status_code,
