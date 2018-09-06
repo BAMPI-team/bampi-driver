@@ -365,7 +365,7 @@ class BampiDriver(driver.ComputeDriver):
         # (value)
         mac_pg_map = {}
         for info in r.json()['bulkRequest']:
-            if info['admin_server_name'] != instance.hostname:
+            if info['admin_server_name'] != instance.display_name:
                 continue
             for port_group in info['port_group_list']:
                 for port in port_group['port_list']:
@@ -583,7 +583,7 @@ class BampiDriver(driver.ComputeDriver):
         # Construct port group name list
         pgn_list = []
         for info in r.json()['bulkRequest']:
-            if info['admin_server_name'] == instance.hostname:
+            if info['admin_server_name'] == instance.display_name:
                 for port_group in info['port_group_list']:
                     LOG.info(_LI("Found port group name: %s."),
                              port_group['port_group_name'],
@@ -923,7 +923,7 @@ class BampiDriver(driver.ComputeDriver):
             raise exception.NovaException("Cannot retrieve HaaS server info from Peregrine-H.")
 
         for info in r.json()['bulkRequest']:
-            if info['admin_server_name'] != instance.hostname:
+            if info['admin_server_name'] != instance.display_name:
                 continue
             for port_group in info['port_group_list']:
                 for port in port_group['port_list']:
