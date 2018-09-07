@@ -341,8 +341,11 @@ class BampiDriver(driver.ComputeDriver):
                          task['taskProfile'],
                          instance=instance)
 
+        if image_meta.name == DUMMY_IMG_NAME:
+            self.reboot(context, instance, network_info, 'HARD')
         LOG.info(_LI("[BAMPI] All provision tasks have ended successfully."),
                  instance=instance)
+
 
         # Retrieve network information from Peregrine-H for target server
         LOG.info(_LI("[PEREGRINE] REQ => getAllHaasServerInfo..."),
