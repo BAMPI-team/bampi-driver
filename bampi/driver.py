@@ -50,7 +50,6 @@ BAMPI_PASS = 'admin'
 PEREGRINE_IP_ADDR = 'peregrine-h.bampi.net'
 PEREGRINE_PORT = 8282
 PEREGRINE_API_BASE_URL = '/controller/nb/v3'
-PEREGRINE_API_SWPORT_URL = '/restconf/operations'
 PEREGRINE_USER = 'admin'
 PEREGRINE_PASS = 'admin'
 
@@ -440,20 +439,15 @@ class BampiDriver(driver.ComputeDriver):
 
         # Shutdown unused switch port(s)
         for mac in mac_map:
-            swport_payload = {
-                    'input': {
-                        'node-ip': mac_map[mac]['sw_ip'],
-                        'port': mac_map[mac]['sw_port']
-                    }
-            }
-            r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_swport_url}/misc-config:set-port-state-off"
+            r = requests.put("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/setPortStateOff/{sw_ip}/{sw_port}"
                                 .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
                                         peregrine_port=PEREGRINE_PORT,
-                                        peregrine_api_swport_url=PEREGRINE_API_SWPORT_URL),
-                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
-                              json=swport_payload)
+                                        peregrine_api_base_url=PEREGRINE_API_BASE_URL,
+                                        sw_ip=mac_map[mac]['sw_ip'],
+                                        sw_port=mac_map[mac]['sw_port']),
+                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
             if r.status_code == 200:
-                if r.json()['output']['set-port-state-off-result'] == 'FAIL':
+                if r.text != 'SUCCESS':
                     LOG.error(_LE("[PEREGRINE] Failed to set "
                                   "%(sw_ip)s:%(sw_port)s state off."),
                               {'sw_ip': mac_map[mac]['sw_ip'],
@@ -671,21 +665,17 @@ class BampiDriver(driver.ComputeDriver):
                           instance=instance)
                 raise exception.NovaException("Cannot set provision VLAN using Peregrine-H. Abort instance spawning...")
 
+        # No shutdown all switch ports
         for pgn in pgn_map:
-            swport_payload = {
-                    'input': {
-                        'node-ip': pgn_map[pgn]['sw_ip'],
-                        'port': pgn_map[pgn]['sw_port']
-                    }
-            }
-            r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_swport_url}/misc-config:set-port-state-on"
+            r = requests.put("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setPortStateOn/{sw_ip}/{sw_port}"
                                 .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
                                         peregrine_port=PEREGRINE_PORT,
-                                        peregrine_api_swport_url=PEREGRINE_API_SWPORT_URL),
-                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
-                              json=swport_payload)
+                                        peregrine_api_base_url=PEREGRINE_API_BASE_URL,
+                                        sw_ip=pgn_map[pgn]['sw_ip'],
+                                        sw_port=pgn_map[pgn]['sw_ip']),
+                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
             if r.status_code == 200:
-                if r.json()['output']['set-port-state-on-result'] == 'FAIL':
+                if r.text != 'SUCCESS':
                     LOG.error(_LE("[PEREGRINE] Failed to set "
                                   "%(sw_ip)s:%(sw_port)s state on."),
                               {'sw_ip': pgn_map[pgn]['sw_ip'],
