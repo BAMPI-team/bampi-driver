@@ -231,7 +231,7 @@ class BampiDriver(driver.ComputeDriver):
         def _wait_for_ready():
             """Called at an interval until the task is successfully ended."""
             status = _get_task_status(t_id)
-            LOG.info(_LI("[BAMPI] Task %(task_id)s status=%(status)s"),
+            LOG.debug(_LI("[BAMPI] Task %(task_id)s status=%(status)s"),
                      {'task_id': t_id,
                       'status': status},
                      instance=instance)
@@ -661,7 +661,7 @@ class BampiDriver(driver.ComputeDriver):
         def _wait_for_ready():
             """Called at an interval until the task is successfully ended."""
             status = _get_task_status(t_id)
-            LOG.info(_LI("[BAMPI] Task %(task_id)s status=%(status)s"),
+            LOG.debug(_LI("[BAMPI] Task %(task_id)s status=%(status)s"),
                      {'task_id': t_id,
                       'status': status},
                      instance=instance)
@@ -820,7 +820,7 @@ class BampiDriver(driver.ComputeDriver):
 
         i = self.instances[instance.uuid]
 
-        LOG.info(_LI("[BAMPI] get_info hostname=%s" % instance.hostname),
+        LOG.debug(_LI("[BAMPI] get_info hostname=%s" % instance.hostname),
                  instance=instance)
         try:
             r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
