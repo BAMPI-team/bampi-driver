@@ -806,7 +806,11 @@ class BampiDriver(driver.ComputeDriver):
                 raise exception.InstanceNotFound(instance_id=instance.uuid)
             else:
                 p_st = r.json()['status']
-                state = power_state_map[p_st]
+                if p_st == 'unknown':
+                    # Default to SHUTDOWN
+                    state = power_state.SHUTDOWN
+                else:
+                    state = power_state_map[p_st]
 
                 # Construct the lost bampi instance...
                 bampi_instance = BampiInstance(instance.name, state, instance.uuid)
@@ -834,7 +838,11 @@ class BampiDriver(driver.ComputeDriver):
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
         else:
             p_st = r.json()['status']
-            i.state = power_state_map[p_st]
+            if p_st == 'unknown':
+                # Remain previous state
+                pass
+            else:
+                i.state = power_state_map[p_st]
 
         return hardware.InstanceInfo(state=i.state,
                                      max_mem_kb=0,
