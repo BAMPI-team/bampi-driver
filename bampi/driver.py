@@ -675,7 +675,7 @@ class BampiDriver(driver.ComputeDriver):
                                         peregrine_port=PEREGRINE_PORT,
                                         peregrine_api_base_url=PEREGRINE_API_BASE_URL,
                                         sw_ip=pgn_map[pgn]['sw_ip'],
-                                        sw_port=pgn_map[pgn]['sw_ip']),
+                                        sw_port=pgn_map[pgn]['sw_port']),
                               auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
             if r.status_code == 200:
                 if r.text != 'SUCCESS':
