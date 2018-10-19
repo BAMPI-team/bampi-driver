@@ -442,7 +442,7 @@ class BampiDriver(driver.ComputeDriver):
 
         # Shutdown unused switch port(s)
         for mac in mac_map:
-            r = requests.put("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/setPortStateOff/{sw_ip}/{sw_port}"
+            r = requests.put("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setPortStateOff/{sw_ip}/{sw_port}"
                                 .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
                                         peregrine_port=PEREGRINE_PORT,
                                         peregrine_api_base_url=PEREGRINE_API_BASE_URL,
