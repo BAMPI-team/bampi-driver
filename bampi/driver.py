@@ -364,18 +364,26 @@ class BampiDriver(driver.ComputeDriver):
                       instance=instance)
             raise exception.NovaException("Cannot retrieve HaaS server info from Peregrine-H.")
 
-        # Construct reverse map of MAC address (key) and port group name
-        # (value)
-        mac_pg_map = {}
+        # Construct reverse map of MAC address (key) and dictionary of port
+        # group name, connected switch ip, and connected switch port (value)
+        mac_map = {}
         for info in r.json()['bulkRequest']:
             if info['admin_server_name'] != instance.display_name:
                 continue
             for port_group in info['port_group_list']:
                 for port in port_group['port_list']:
-                    LOG.info(_LI("Found port MAC: %s with port group name: %s."),
+                    LOG.info(_LI("Found port MAC: %s with dictionary of port "
+                                 "group name: %s, connected switch ip: %s, connected"
+                                 "switch port: %s."),
                              port['port_mac'], port_group['port_group_name'],
+                             port['connected_sw_ip'],
+                             port['connected_sw_port'],
                              instance=instance)
-                    mac_pg_map[port['port_mac']] = port_group['port_group_name']
+                    mac_map[port['port_mac']] = {
+                            'pg_name': port_group['port_group_name'],
+                            'sw_ip': port['connected_sw_ip'],
+                            'sw_port': port['connected_sw_port']
+                    }
 
         network_provision_payload = {}
         ni = jsonutils.loads(network_info.json())
@@ -402,7 +410,7 @@ class BampiDriver(driver.ComputeDriver):
                 network_provision_payload = {
                     'provision_vlan': {
                         'admin_server_name': instance.display_name,
-                        'port_group_name': mac_pg_map[mac_address],
+                        'port_group_name': mac_map[mac_address]['pg_name'],
                         'untagged_vlan': segmentation_id,
                         'tagged_vlans': []
                     }
@@ -425,11 +433,43 @@ class BampiDriver(driver.ComputeDriver):
             if r.status_code == 200:
                 LOG.info(_LI("[PEREGRINE] Tenant network set successfully."),
                          instance=instance)
+                del mac_map[mac_address]
             else:
                 LOG.error(_LE("[PEREGRINE] ret_code=%s"),
                           r.status_code,
                           instance=instance)
                 raise exception.NovaException("Cannot set tenant VLAN using Peregrine-H. Abort instance spawning...")
+
+        # Shutdown unused switch port(s)
+        for mac in mac_map:
+            r = requests.put("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/setPortStateOff/{sw_ip}/{sw_port}"
+                                .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
+                                        peregrine_port=PEREGRINE_PORT,
+                                        peregrine_api_base_url=PEREGRINE_API_BASE_URL,
+                                        sw_ip=mac_map[mac]['sw_ip'],
+                                        sw_port=mac_map[mac]['sw_port']),
+                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
+            if r.status_code == 200:
+                if r.text != 'SUCCESS':
+                    LOG.error(_LE("[PEREGRINE] Failed to set "
+                                  "%(sw_ip)s:%(sw_port)s state off."),
+                              {'sw_ip': mac_map[mac]['sw_ip'],
+                               'sw_port': mac_map[mac]['sw_port']},
+                              instance=instance)
+                    raise exception.NovaException("Cannot shutdown switch port "
+                            "using Peregrine-H. Abort instance spawning...")
+                else:
+                    LOG.info(_LI("[PEREGRINE] Unused switch port "
+                             "%(sw_ip)s:%(sw_port)s shutdown successfully."),
+                             {'sw_ip': mac_map[mac]['sw_ip'],
+                              'sw_port': mac_map[mac]['sw_port']},
+                             instance=instance)
+            else:
+                LOG.error(_LE("[PEREGRINE] ret_code=%s"),
+                          r.status_code,
+                          instance=instance)
+                raise exception.NovaException("Cannot shutdown switch port "
+                        "using Peregrine-H. Abort instance spawning...")
 
     def snapshot(self, context, instance, image_id, update_task_state):
         if instance.uuid not in self.instances:
@@ -584,14 +624,18 @@ class BampiDriver(driver.ComputeDriver):
             raise exception.NovaException("Cannot retrieve HaaS server info from Peregrine-H.")
 
         # Construct port group name list
-        pgn_list = []
+        pgn_map = {}
         for info in r.json()['bulkRequest']:
             if info['admin_server_name'] == instance.display_name:
                 for port_group in info['port_group_list']:
                     LOG.info(_LI("Found port group name: %s."),
                              port_group['port_group_name'],
                              instance=instance)
-                    pgn_list.append(port_group['port_group_name'])
+                    for port in port_group['port_list']:
+                        pgn_map[port_group['port_group_name']] = {
+                                'sw_ip': port['connected_sw_ip'],
+                                'sw_port': port['connected_sw_port']
+                        }
                 break
 
         # Switch back to provision network
@@ -603,10 +647,10 @@ class BampiDriver(driver.ComputeDriver):
                 'tagged_vlans': []
             }
         }
-        for pgn in pgn_list:
+        for pgn in pgn_map:
             network_provision_payload['provision_vlan']['port_group_name'] = pgn
 
-            # Change VLAN ID from provision network to tenant network
+            # Change VLAN ID from tenant network to provision network
             LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."),
                      instance=instance)
             r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
@@ -623,6 +667,37 @@ class BampiDriver(driver.ComputeDriver):
                           r.status_code,
                           instance=instance)
                 raise exception.NovaException("Cannot set provision VLAN using Peregrine-H. Abort instance spawning...")
+
+        # No shutdown all switch ports
+        for pgn in pgn_map:
+            r = requests.put("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setPortStateOn/{sw_ip}/{sw_port}"
+                                .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
+                                        peregrine_port=PEREGRINE_PORT,
+                                        peregrine_api_base_url=PEREGRINE_API_BASE_URL,
+                                        sw_ip=pgn_map[pgn]['sw_ip'],
+                                        sw_port=pgn_map[pgn]['sw_ip']),
+                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
+            if r.status_code == 200:
+                if r.text != 'SUCCESS':
+                    LOG.error(_LE("[PEREGRINE] Failed to set "
+                                  "%(sw_ip)s:%(sw_port)s state on."),
+                              {'sw_ip': pgn_map[pgn]['sw_ip'],
+                               'sw_port': pgn_map[pgn]['sw_port']},
+                              instance=instance)
+                    raise exception.NovaException("Cannot shutdown switch port "
+                            "using Peregrine-H. Abort instance spawning...")
+                else:
+                    LOG.info(_LI("[PEREGRINE] Switch port "
+                             "%(sw_ip)s:%(sw_port)s no shutdown successfully."),
+                             {'sw_ip': pgn_map[pgn]['sw_ip'],
+                              'sw_port': pgn_map[pgn]['sw_port']},
+                             instance=instance)
+            else:
+                LOG.error(_LE("[PEREGRINE] ret_code=%s"),
+                          r.status_code,
+                          instance=instance)
+                raise exception.NovaException("Cannot no shutdown switch port "
+                        "using Peregrine-H. Abort instance spawning...")
 
 
     def destroy(self, context, instance, network_info, block_device_info=None,
