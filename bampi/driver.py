@@ -144,7 +144,7 @@ class BampiDriver(driver.ComputeDriver):
         "has_imagecache": False,
         "supports_recreate": True,
         "supports_migrate_to_same_host": False,
-        "supports_attach_interface": False
+        "supports_attach_interface": True
     }
 
     # Since we don't have a real hypervisor, pretend we have lots of
@@ -1189,6 +1189,10 @@ class BampiDriver(driver.ComputeDriver):
 
     def unquiesce(self, context, instance, image_meta):
         pass
+
+    def network_binding_host_id(self, context, instance):
+        """Get host ID to associate with network ports."""
+        return instance.get('host')
 
 
 class BampiVirtAPI(virtapi.VirtAPI):
