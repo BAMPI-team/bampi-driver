@@ -68,7 +68,8 @@ PROVISION_VLAN_ID = 41
 # Power state mapping
 power_state_map = {
     'on': power_state.RUNNING,
-    'off': power_state.SHUTDOWN
+    'off': power_state.SHUTDOWN,
+    'unknown': power_state.NOSTATE
 }
 
 
@@ -913,11 +914,7 @@ class BampiDriver(driver.ComputeDriver):
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
         else:
             p_st = r.json()['status']
-            if p_st == 'unknown':
-                # Remain previous state
-                pass
-            else:
-                i.state = power_state_map[p_st]
+            i.state = power_state_map[p_st]
 
         return hardware.InstanceInfo(state=i.state,
                                      max_mem_kb=0,
