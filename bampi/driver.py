@@ -546,25 +546,46 @@ class BampiDriver(driver.ComputeDriver):
         LOG.info(_LI("[BAMPI] Power off hostname=%s" % instance.hostname),
                  instance=instance)
 
-	# NOTE: Prevent machines being powered off by power status check
+        # Check power state again
+        try:
+            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        hostname=instance.hostname),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+            r.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
+        else:
+            p_st = r.json()['status']
+
+        # NOTE: Prevent machines being powered off by power status check
         # mechanism
-	if instance.vm_state == 'stopped' and instance.power_state == power_state.RUNNING:
+        if instance.vm_state == 'stopped' and instance.power_state == power_state.RUNNING:
             LOG.warn(_LW("Forcing machine %s to be powered off is not allowed" % instance.hostname),
                      instance=instance)
-	else:
-            try:
-                r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
-                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                            bampi_port=BAMPI_PORT,
-                                            bampi_api_base_url=BAMPI_API_BASE_URL,
-                                            hostname=instance.hostname),
-                                 auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
-                                 json={'status': 'off'})
-                r.raise_for_status()
-            except requests.exception.HTTPError as e:
-                LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
-            finally:
-                self.instances[instance.uuid].state = power_state.SHUTDOWN
+            return
+        # Sometimes the BMC may behave abnormally, we'll check its power state again
+        elif instance.vm_state == 'active' and instance.power_state == power_state.SHUTDOWN:
+            if power_state_map[p_st] == power_state.RUNNING:
+                LOG.warn(_LW("Power state false alarm, we don't power off the server"), instance=instance)
+                return
+
+        # Actually doing power off
+        try:
+            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        hostname=instance.hostname),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                             json={'status': 'off'})
+            r.raise_for_status()
+        except requests.exception.HTTPError as e:
+            LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
+        finally:
+            self.instances[instance.uuid].state = power_state.SHUTDOWN
 
     def power_on(self, context, instance, network_info,
                  block_device_info=None):
