@@ -1008,35 +1008,6 @@ class BampiDriver(driver.ComputeDriver):
     def block_stats(self, instance, disk_id):
         return [0, 0, 0, 0, None]
 
-    def macs_for_instance(self, instance):
-        macs = []
-        LOG.info(_LI("[PEREGRINE] REQ => getAllHaasServerInfo..."),
-                 instance=instance)
-        r = requests.get("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/v2v/getAllHaasServerInfo"
-                            .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
-                                    peregrine_port=PEREGRINE_PORT,
-                                    peregrine_api_base_url=PEREGRINE_API_BASE_URL),
-                          auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
-        if r.status_code == 200:
-            LOG.info(_LI("[PEREGRINE] HaaS server info retrieved successfully."),
-                     instance=instance)
-        else:
-            LOG.error(_LE("[PEREGRINE] ret_code=%s"),
-                      r.status_code,
-                      instance=instance)
-            raise exception.NovaException("Cannot retrieve HaaS server info from Peregrine-H.")
-
-        for info in r.json()['bulkRequest']:
-            if info['admin_server_name'] != instance.display_name:
-                continue
-            for port_group in info['port_group_list']:
-                for port in port_group['port_list']:
-                    LOG.info(_LI("Found port MAC: %s."), port['port_mac'], instance=instance)
-                    macs.append(port['port_mac'])
-
-        return set(macs)
-
-
     def get_console_output(self, context, instance):
 
         def _get_last_task_id(hostname):
