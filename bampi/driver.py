@@ -6,10 +6,14 @@ provision bare metal resources.
 
 import collections
 import contextlib
+import os
+import uuid
+
 
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_service import loopingcall
+from oslo_utils import fileutils
 from oslo_utils import versionutils
 
 from nova.compute import arch
@@ -27,6 +31,8 @@ from nova.virt import diagnostics
 from nova.virt import driver
 from nova.virt import hardware
 from nova.virt import virtapi
+from nova import image
+from nova import utils
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -149,6 +155,7 @@ class BampiDriver(driver.ComputeDriver):
         self._mounts = {}
         self._interfaces = {}
         self.active_migrations = {}
+        self._image_api = image.API()
         if not _BAMPI_NODES:
             set_nodes([CONF.host])
 
@@ -430,10 +437,76 @@ class BampiDriver(driver.ComputeDriver):
                 raise exception.NovaException("Cannot shutdown switch port "
                         "using Peregrine-H. Abort instance spawning...")
 
+    def _create_snapshot_metadata(self, image_meta, instance,
+                                  img_fmt, snp_name):
+        metadata = {'is_public': False,
+                    'status': 'active',
+                    'name': snp_name,
+                    'properties': {
+                                   'kernel_id': instance.kernel_id,
+                                   'image_location': 'snapshot',
+                                   'image_state': 'available',
+                                   'owner_id': instance.project_id,
+                                   'ramdisk_id': instance.ramdisk_id,
+                                   }
+                    }
+        if instance.os_type:
+            metadata['properties']['os_type'] = instance.os_type
+
+        if image_meta.disk_format == 'ami':
+            metadata['disk_format'] = 'ami'
+        else:
+            metadata['disk_format'] = img_fmt
+
+        if image_meta.obj_attr_is_set("container_format"):
+            metadata['container_format'] = image_meta.container_format
+        else:
+            metadata['container_format'] = "bare"
+
+        return metadata
+
     def snapshot(self, context, instance, image_id, update_task_state):
         if instance.uuid not in self.instances:
             raise exception.InstanceNotRunning(instance_id=instance.uuid)
-        update_task_state(task_state=task_states.IMAGE_UPLOADING)
+        snapshot = self._image_api.get(context, image_id)
+        image_format = 'raw'
+        metadata = self._create_snapshot_metadata(instance.image_meta,
+                                                  instance,
+                                                  image_format,
+                                                  snapshot['name'])
+        snapshot_name = uuid.uuid4().hex
+
+        update_task_state(task_state=task_states.IMAGE_PENDING_UPLOAD)
+        LOG.info(_LI("Image pending upload..."), instance=instance)
+
+        snapshot_directory = '/tmp'
+        fileutils.ensure_tree(snapshot_directory)
+
+        with utils.tempdir(dir=snapshot_directory) as tmpdir:
+            # TODO: Write to file
+            out_path = os.path.join(tmpdir, snapshot_name)
+            LOG.info(_LI("Snapshot extracted, beginning image upload"),
+                         instance=instance)
+
+            # Upload that image to the image service
+            update_task_state(task_state=task_states.IMAGE_UPLOADING,
+                    expected_state=task_states.IMAGE_PENDING_UPLOAD)
+            LOG.info(_LI("Image uploading with metadata=%(metadata)s, "
+                         "snapshot_directory=%(snapshot_directory)s"),
+                     {
+                         'metadata': metadata,
+                         'snapshot_directory': snapshot_directory
+                     },
+                     instance=instance)
+            # TODO: We use dummy file here right now as we don't actually have
+            # the backup image
+            with open('/tmp/blob') as image_file:
+                self._image_api.update(context,
+                                       image_id,
+                                       metadata,
+                                       image_file)
+
+        LOG.info(_LI("Snapshot image upload complete"), instance=instance)
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
