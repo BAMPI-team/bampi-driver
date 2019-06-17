@@ -479,7 +479,7 @@ class BampiDriver(driver.ComputeDriver):
         update_task_state(task_state=task_states.IMAGE_PENDING_UPLOAD)
         LOG.info(_LI("Image pending upload..."), instance=instance)
 
-        snapshot_directory = '/tmp'
+        snapshot_directory = SNAPSHOT_DIRECTORY
         fileutils.ensure_tree(snapshot_directory)
 
         with utils.tempdir(dir=snapshot_directory) as tmpdir:
