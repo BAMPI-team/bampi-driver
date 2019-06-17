@@ -482,6 +482,88 @@ class BampiDriver(driver.ComputeDriver):
         snapshot_directory = SNAPSHOT_DIRECTORY
         fileutils.ensure_tree(snapshot_directory)
 
+        def _get_task_status(t_id):
+            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks/{task_id}"
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+                                        task_id=t_id),
+                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+            t_status = r.json()['status']
+            return t_status
+
+        def _wait_for_ready():
+            """Called at an interval until the task is successfully ended."""
+            status = _get_task_status(t_id)
+            LOG.debug(_LI("[BAMPI] Task %(task_id)s status=%(status)s"),
+                     {'task_id': t_id,
+                      'status': status},
+                     instance=instance)
+
+            if status == 'Success':
+                LOG.info(_LI("[BAMPI] Task %(task_id)s ended successfully."),
+                         {'task_id': t_id,
+                          'status': status},
+                         instance=instance)
+                raise loopingcall.LoopingCallDone()
+            if status == 'Error':
+                LOG.error(_LE("[BAMPI] Task %(task_id)s failed."),
+                          {'task_id': t_id},
+                          instance=instance)
+                raise loopingcall.LoopingCallDone(False)
+
+        backup_tasks_q = [{
+                    'taskType': 'change_boot_mode',
+                    'taskProfile': 'PXE'
+                }, {
+                    'taskType': 'disposable_os_run_script',
+                    'taskProfile': 'haas_backup',
+                    'options': snapshot_name
+                }, {
+                    'taskType': 'change_boot_mode',
+                    'taskProfile': 'Disabled'
+                }]
+
+        # Iterate through all tasks in backup task queue
+        for task in backup_tasks_q:
+            task['hostname'] = instance.display_name
+
+            # Requesting outer service to execute the task
+            LOG.info(_LI("[BAMPI] REQ => Starting backup task %s..."),
+                     task['taskType'], instance=instance)
+            r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
+                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
+                                        bampi_port=BAMPI_PORT,
+                                        bampi_api_base_url=BAMPI_API_BASE_URL),
+                              auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json=task)
+            try:
+                t_id = r.json()['id']
+            except KeyError:
+                # If we cannot find 'id' in return json...
+                LOG.error(_LE("[BAMPI] RESP (backup) => task_type=%s, task_profile=%s, ret_code=%s"),
+                          task['taskType'], task['taskProfile'], r.status_code,
+                          instance=instance)
+                raise exception.NovaException("BAMPI cannot execute task. Abort instance backup...")
+            else:
+                LOG.info(_LI("[BAMPI] RESP (backup) => ret_code=%s, task_id=%s"),
+                         r.status_code, t_id, instance=instance)
+
+            # Polling for task status
+            time = loopingcall.FixedIntervalLoopingCall(_wait_for_ready)
+            ret = time.start(interval=30).wait()
+
+            # Task failed, abort spawning
+            if ret == False:
+                raise exception.NovaException("Backup task failed. Abort instance backup...")
+            else:
+                LOG.info(_LI("[BAMPI] Backup task %s:%s has ended successfully."),
+                         task['taskType'],
+                         task['taskProfile'],
+                         instance=instance)
+
+        LOG.info(_LI("[BAMPI] All backup tasks have ended successfully."),
+                 instance=instance)
+
         with utils.tempdir(dir=snapshot_directory) as tmpdir:
             # TODO: Write to file
             out_path = os.path.join(tmpdir, snapshot_name)
