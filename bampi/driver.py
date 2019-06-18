@@ -565,9 +565,13 @@ class BampiDriver(driver.ComputeDriver):
                  instance=instance)
 
         with utils.tempdir(dir=snapshot_directory) as tmpdir:
-            # TODO: Write to file
+            # Create a 16 MB file with random content and name as fake image
+            # under the snapshot directory
             out_path = os.path.join(tmpdir, snapshot_name)
-            LOG.info(_LI("Snapshot extracted, beginning image upload"),
+            with open(out_path, 'w') as f:
+                for i in range((16*2**20)/512):
+                    f.write(os.urandom(512))
+            LOG.info(_LI("Snapshot created, beginning image upload"),
                          instance=instance)
 
             # Upload that image to the image service
@@ -582,7 +586,7 @@ class BampiDriver(driver.ComputeDriver):
                      instance=instance)
             # TODO: We use dummy file here right now as we don't actually have
             # the backup image
-            with open('/tmp/blob') as image_file:
+            with open(out_path) as image_file:
                 self._image_api.update(context,
                                        image_id,
                                        metadata,
