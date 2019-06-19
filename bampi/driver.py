@@ -39,32 +39,6 @@ LOG = logging.getLogger(__name__)
 _BAMPI_NODES = None
 
 
-# BAMPI basic information
-BAMPI_IP_ADDR = 'bampi.bampi.net'
-BAMPI_PORT = 80
-BAMPI_API_BASE_URL = '/bampi/api/kddi/v1'
-BAMPI_USER = 'admin'
-BAMPI_PASS = 'admin'
-
-# Peregrine basic information
-PEREGRINE_IP_ADDR = 'peregrine-h.bampi.net'
-PEREGRINE_PORT = 8282
-PEREGRINE_API_BASE_URL = '/controller/nb/v3'
-PEREGRINE_USER = 'admin'
-PEREGRINE_PASS = 'admin'
-
-# HaaS-core basic information
-HAAS_CORE_IP_ADDR = 'hcore-1.bampi.net'
-HAAS_CORE_PORT = 8080
-HAAS_CORE_API_BASE_URL = '/haas-core/api'
-OS_USER = 'admin'
-OS_PASS = 'password'
-
-DUMMY_IMG_NAME = 'clonezilla-live-install-less_image.iso'
-
-# Network configuration for provisioning
-PROVISION_VLAN_ID = 41
-
 # Power state mapping
 power_state_map = {
     'on': power_state.RUNNING,
@@ -220,12 +194,10 @@ class BampiDriver(driver.ComputeDriver):
 
         # XXX: Where dirty hack begins
         def _get_task_status(t_id):
-            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks/{task_id}"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+            r = requests.get("http://{bampi_endpoint}/tasks/{task_id}"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         task_id=t_id),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password))
             t_status = r.json()['status']
             return t_status
 
@@ -251,11 +223,9 @@ class BampiDriver(driver.ComputeDriver):
 
         # Specify hostname to decide which bare metal server to provision
         LOG.info(_LI("[BAMPI] hostname=%s"), instance.hostname, instance=instance)
-        r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers"
-                            .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                    bampi_port=BAMPI_PORT,
-                                    bampi_api_base_url=BAMPI_API_BASE_URL),
-                         auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+        r = requests.get("http://{bampi_endpoint}/servers"
+                            .format(bampi_endpoint=CONF.bampi.bampi_endpoint),
+                         auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password))
         servers = r.json()
         try:
             server = (s for s in servers if s['hostname'].lower() == instance.hostname).next()
@@ -267,15 +237,13 @@ class BampiDriver(driver.ComputeDriver):
             return
 
         # Check dummy or not
-        if image_meta.name == DUMMY_IMG_NAME:
+        if image_meta.name == CONF.bampi.dummy_image_name:
             LOG.info(_LI("[BAMPI] Dummy RestoreOS on hostname=%s"), instance.hostname, instance=instance)
             try:
-                r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
-                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                            bampi_port=BAMPI_PORT,
-                                            bampi_api_base_url=BAMPI_API_BASE_URL,
+                r = requests.get("http://{bampi_endpoint}/servers/{hostname}/powerStatus"
+                                    .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                             hostname=instance.hostname),
-                                 auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+                                 auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password))
                 r.raise_for_status()
             except requests.exceptions.HTTPError as e:
                 LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
@@ -312,11 +280,9 @@ class BampiDriver(driver.ComputeDriver):
             # Requesting outer service to execute the task
             LOG.info(_LI("[BAMPI] REQ => Starting provision task %s..."),
                      task['taskType'], instance=instance)
-            r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL),
-                              auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json=task)
+            r = requests.post('http://{bampi_endpoint}/tasks'
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint),
+                              auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password), json=task)
             try:
                 t_id = r.json()['id']
             except KeyError:
@@ -342,7 +308,7 @@ class BampiDriver(driver.ComputeDriver):
                          task['taskProfile'],
                          instance=instance)
 
-        if image_meta.name == DUMMY_IMG_NAME:
+        if image_meta.name == CONF.bampi.dummy_image_name:
             self.reboot(context, instance, network_info, 'HARD')
         LOG.info(_LI("[BAMPI] All provision tasks have ended successfully."),
                  instance=instance)
@@ -351,11 +317,9 @@ class BampiDriver(driver.ComputeDriver):
         # Retrieve network information from Peregrine-H for target server
         LOG.info(_LI("[PEREGRINE] REQ => getAllHaasServerInfo..."),
                  instance=instance)
-        r = requests.get("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/v2v/getAllHaasServerInfo"
-                            .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
-                                    peregrine_port=PEREGRINE_PORT,
-                                    peregrine_api_base_url=PEREGRINE_API_BASE_URL),
-                          auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
+        r = requests.get("http://{peregrine_endpoint}/v2v/getAllHaasServerInfo"
+                            .format(peregrine_endpoint=CONF.bampi.peregrine_endpoint),
+                          auth=HTTPBasicAuth(CONF.bampi.peregrine_username, CONF.bampi.peregrine_password))
         if r.status_code == 200:
             LOG.info(_LI("[PEREGRINE] HaaS server info retrieved successfully."),
                      instance=instance)
@@ -396,12 +360,10 @@ class BampiDriver(driver.ComputeDriver):
 
             # Get segmentation ID of desired tenant networks from HaaS-core
             LOG.info(_LI("[HAAS_CORE] REQ => network_detail..."), instance=instance)
-            r = requests.get("http://{haas_core_ip_addr}:{haas_core_port}{haas_core_api_base_url}/network/get/{tenant_network_id}"
-                                .format(haas_core_ip_addr=HAAS_CORE_IP_ADDR,
-                                        haas_core_port=HAAS_CORE_PORT,
-                                        haas_core_api_base_url=HAAS_CORE_API_BASE_URL,
+            r = requests.get("http://{haas_core_endpoint}/network/get/{tenant_network_id}"
+                                .format(haas_core_endpoint=CONF.bampi.haas_core_endpoint,
                                         tenant_network_id=tnid),
-                             auth=HTTPBasicAuth(OS_USER, OS_PASS))
+                             auth=HTTPBasicAuth(CONF.bampi.haas_core_username, CONF.bampi.haas_core_password))
             if r.status_code == 200:
                 data = r.json()['data']
                 nd = jsonutils.loads(data)
@@ -425,11 +387,9 @@ class BampiDriver(driver.ComputeDriver):
             # Provision VLANs for tenant networks
             LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."),
                      instance=instance)
-            r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
-                                .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
-                                        peregrine_port=PEREGRINE_PORT,
-                                        peregrine_api_base_url=PEREGRINE_API_BASE_URL),
-                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
+            r = requests.post("http://{peregrine_endpoint}/networkprovision/setVlan"
+                                .format(peregrine_endpoint=CONF.bampi.peregrine_endpoint),
+                              auth=HTTPBasicAuth(CONF.bampi.peregrine_username, CONF.bampi.peregrine_password),
                               json=network_provision_payload)
             if r.status_code == 200:
                 LOG.info(_LI("[PEREGRINE] Tenant network set successfully."),
@@ -443,13 +403,11 @@ class BampiDriver(driver.ComputeDriver):
 
         # Shutdown unused switch port(s)
         for mac in mac_map:
-            r = requests.put("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setPortStateOff/{sw_ip}/{sw_port}"
-                                .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
-                                        peregrine_port=PEREGRINE_PORT,
-                                        peregrine_api_base_url=PEREGRINE_API_BASE_URL,
+            r = requests.put("http://{peregrine_endpoint}/networkprovision/setPortStateOff/{sw_ip}/{sw_port}"
+                                .format(peregrine_endpoint=CONF.bampi.peregrine_endpoint,
                                         sw_ip=mac_map[mac]['sw_ip'],
                                         sw_port=mac_map[mac]['sw_port']),
-                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
+                              auth=HTTPBasicAuth(CONF.bampi.peregrine_username, CONF.bampi.peregrine_password))
             if r.status_code == 200:
                 if r.text != 'SUCCESS':
                     LOG.error(_LE("[PEREGRINE] Failed to set "
@@ -490,12 +448,10 @@ class BampiDriver(driver.ComputeDriver):
                  {'hostname': instance.hostname, 'reboot_type': reboot_type},
                  instance=instance)
         try:
-            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+            r = requests.put("http://{bampi_endpoint}/servers/{hostname}/powerStatus"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         hostname=instance.hostname),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
                              json=payload)
             r.raise_for_status()
         except requests.exception.HTTPError as e:
@@ -548,12 +504,10 @@ class BampiDriver(driver.ComputeDriver):
 
         # Check power state again
         try:
-            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+            r = requests.get("http://{bampi_endpoint}/servers/{hostname}/powerStatus"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         hostname=instance.hostname),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password))
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
@@ -574,12 +528,10 @@ class BampiDriver(driver.ComputeDriver):
 
         # Actually doing power off
         try:
-            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+            r = requests.put("http://{bampi_endpoint}/servers/{hostname}/powerStatus"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         hostname=instance.hostname),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
                              json={'status': 'off'})
             r.raise_for_status()
         except requests.exception.HTTPError as e:
@@ -591,12 +543,10 @@ class BampiDriver(driver.ComputeDriver):
                  block_device_info=None):
         LOG.info(_LI("[BAMPI] Power on hostname=%s" % instance.hostname), instance=instance)
         try:
-            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+            r = requests.put("http://{bampi_endpoint}/servers/{hostname}/powerStatus"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         hostname=instance.hostname),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
                              json={'status': 'on'})
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
@@ -631,11 +581,9 @@ class BampiDriver(driver.ComputeDriver):
         # Retrieve network information from Peregrine-H for target server
         LOG.info(_LI("[PEREGRINE] REQ => getAllHaasServerInfo..."),
                  instance=instance)
-        r = requests.get("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/v2v/getAllHaasServerInfo"
-                            .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
-                                    peregrine_port=PEREGRINE_PORT,
-                                    peregrine_api_base_url=PEREGRINE_API_BASE_URL),
-                          auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
+        r = requests.get("http://{peregrine_endpoint}/v2v/getAllHaasServerInfo"
+                            .format(peregrine_endpoint=CONF.bampi.peregrine_endpoint),
+                          auth=HTTPBasicAuth(CONF.bampi.peregrine_username, CONF.bampi.peregrine_password))
         if r.status_code == 200:
             LOG.info(_LI("[PEREGRINE] HaaS server info retrieved successfully."),
                      instance=instance)
@@ -665,7 +613,7 @@ class BampiDriver(driver.ComputeDriver):
             'provision_vlan': {
                 'admin_server_name': instance.display_name,
                 'port_group_name': '',
-                'untagged_vlan': PROVISION_VLAN_ID,
+                'untagged_vlan': CONF.bampi.provision_vlan_id,
                 'tagged_vlans': []
             }
         }
@@ -675,11 +623,9 @@ class BampiDriver(driver.ComputeDriver):
             # Change VLAN ID from tenant network to provision network
             LOG.info(_LI("[PEREGRINE] REQ => networkProvision..."),
                      instance=instance)
-            r = requests.post("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setVlan"
-                                .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
-                                        peregrine_port=PEREGRINE_PORT,
-                                        peregrine_api_base_url=PEREGRINE_API_BASE_URL),
-                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS),
+            r = requests.post("http://{peregrine_endpoint}/networkprovision/setVlan"
+                                .format(peregrine_endpoint=CONF.bampi.peregrine_endpoint),
+                              auth=HTTPBasicAuth(CONF.bampi.peregrine_username, CONF.bampi.peregrine_password),
                               json=network_provision_payload)
             if r.status_code == 200:
                 LOG.info(_LI("[PEREGRINE] Provision network set successfully."),
@@ -692,13 +638,11 @@ class BampiDriver(driver.ComputeDriver):
 
         # No shutdown all switch ports
         for pgn in pgn_map:
-            r = requests.put("http://{peregrine_ip_addr}:{peregrine_port}{peregrine_api_base_url}/networkprovision/setPortStateOn/{sw_ip}/{sw_port}"
-                                .format(peregrine_ip_addr=PEREGRINE_IP_ADDR,
-                                        peregrine_port=PEREGRINE_PORT,
-                                        peregrine_api_base_url=PEREGRINE_API_BASE_URL,
+            r = requests.put("http://{peregrine_endpoint}/networkprovision/setPortStateOn/{sw_ip}/{sw_port}"
+                                .format(peregrine_endpoint=CONF.bampi.peregrine_endpoint,
                                         sw_ip=pgn_map[pgn]['sw_ip'],
                                         sw_port=pgn_map[pgn]['sw_port']),
-                              auth=HTTPBasicAuth(PEREGRINE_USER, PEREGRINE_PASS))
+                              auth=HTTPBasicAuth(CONF.bampi.peregrine_username, CONF.bampi.peregrine_password))
             if r.status_code == 200:
                 if r.text != 'SUCCESS':
                     LOG.error(_LE("[PEREGRINE] Failed to set "
@@ -746,12 +690,10 @@ class BampiDriver(driver.ComputeDriver):
     def cleanup(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True, migrate_data=None, destroy_vifs=True):
         def _get_task_status(t_id):
-            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks/{task_id}"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+            r = requests.get("http://{bampi_endpoint}/tasks/{task_id}"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         task_id=t_id),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password))
             t_status = r.json()['status']
             return t_status
 
@@ -792,11 +734,9 @@ class BampiDriver(driver.ComputeDriver):
             # Requesting outer service to execute the task
             LOG.info(_LI("[BAMPI] REQ => Starting cleanup task %s..."),
                      task['taskType'], instance=instance)
-            r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL),
-                              auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json=task)
+            r = requests.post('http://{bampi_endpoint}/tasks'
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint),
+                              auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password), json=task)
             try:
                 t_id = r.json()['id']
             except KeyError:
@@ -826,23 +766,19 @@ class BampiDriver(driver.ComputeDriver):
                  instance=instance)
         LOG.info(_LI("[HAAS_CORE] REQ => Mark server as available..."),
                  instance=instance)
-        r = requests.put('http://{haas_core_ip_addr}:{haas_core_port}{haas_core_api_base_url}/servers/{hostname}/available'
-                            .format(haas_core_ip_addr=HAAS_CORE_IP_ADDR,
-                                    haas_core_port=HAAS_CORE_PORT,
-                                    haas_core_api_base_url=HAAS_CORE_API_BASE_URL,
+        r = requests.put('http://{haas_core_endpoint}/servers/{hostname}/available'
+                            .format(haas_core_endpoint=CONF.bampi.haas_core_endpoint,
                                     hostname=instance.hostname),
-                         auth=HTTPBasicAuth(OS_USER, OS_PASS))
+                         auth=HTTPBasicAuth(CONF.bampi.haas_core_username, CONF.bampi.haas_core_password))
 
         # Boot into disposable OS to stand-by
         LOG.info(_LI("[BAMPI] Power on hostname=%s to stand-by" % instance.hostname),
                  instance=instance)
         try:
-            r = requests.put("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+            r = requests.put("http://{bampi_endpoint}/servers/{hostname}/powerStatus"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         hostname=instance.hostname),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
                              json={'status': 'on'})
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
@@ -891,12 +827,10 @@ class BampiDriver(driver.ComputeDriver):
         if instance.uuid not in self.instances:
             # Instance not found may caused by bampi driver memory lost...
             try:
-                r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
-                                    .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                            bampi_port=BAMPI_PORT,
-                                            bampi_api_base_url=BAMPI_API_BASE_URL,
+                r = requests.get("http://{bampi_endpoint}/servers/{hostname}/powerStatus"
+                                    .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                             hostname=instance.hostname),
-                                 auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+                                 auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password))
                 r.raise_for_status()
             except requests.exceptions.HTTPError as e:
                 LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
@@ -924,12 +858,10 @@ class BampiDriver(driver.ComputeDriver):
         LOG.debug(_LI("[BAMPI] get_info hostname=%s" % instance.hostname),
                  instance=instance)
         try:
-            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/servers/{hostname}/powerStatus"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+            r = requests.get("http://{bampi_endpoint}/servers/{hostname}/powerStatus"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         hostname=instance.hostname),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password))
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
@@ -1012,11 +944,9 @@ class BampiDriver(driver.ComputeDriver):
 
         def _get_last_task_id(hostname):
             try:
-                r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                            bampi_port=BAMPI_PORT,
-                                            bampi_api_base_url=BAMPI_API_BASE_URL),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS),
+                r = requests.get("http://{bampi_endpoint}/tasks"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint),
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
                              params={'hostname': hostname})
                 r.raise_for_status()
             except requests.exceptions.HTTPError as e:
@@ -1037,12 +967,10 @@ class BampiDriver(driver.ComputeDriver):
             return 'EMPTY'
 
         try:
-            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks/{task_id}/log"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+            r = requests.get("http://{bampi_endpoint}/tasks/{task_id}/log"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         task_id=t_id),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password))
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
