@@ -479,16 +479,14 @@ class BampiDriver(driver.ComputeDriver):
         update_task_state(task_state=task_states.IMAGE_PENDING_UPLOAD)
         LOG.info(_LI("Image pending upload..."), instance=instance)
 
-        snapshot_directory = SNAPSHOT_DIRECTORY
+        snapshot_directory = CONF.bampi.backup_directory
         fileutils.ensure_tree(snapshot_directory)
 
         def _get_task_status(t_id):
-            r = requests.get("http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks/{task_id}"
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL,
+            r = requests.get("{bampi_endpoint}/tasks/{task_id}"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         task_id=t_id),
-                             auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS))
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password))
             t_status = r.json()['status']
             return t_status
 
@@ -531,11 +529,9 @@ class BampiDriver(driver.ComputeDriver):
             # Requesting outer service to execute the task
             LOG.info(_LI("[BAMPI] REQ => Starting backup task %s..."),
                      task['taskType'], instance=instance)
-            r = requests.post('http://{bampi_ip_addr}:{bampi_port}{bampi_api_base_url}/tasks'
-                                .format(bampi_ip_addr=BAMPI_IP_ADDR,
-                                        bampi_port=BAMPI_PORT,
-                                        bampi_api_base_url=BAMPI_API_BASE_URL),
-                              auth=HTTPBasicAuth(BAMPI_USER, BAMPI_PASS), json=task)
+            r = requests.post('{bampi_endpoint}/tasks'
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint),
+                              auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password), json=task)
             try:
                 t_id = r.json()['id']
             except KeyError:

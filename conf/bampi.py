@@ -45,6 +45,10 @@ bampi_options = [
         'provision_vlan_id',
         default=41,
         help='Dedicated VLAN ID for provisioning purpose'),
+    cfg.StrOpt(
+        'backup_directory',
+        default='/tmp/snapshots',
+        help='Temporary directory for backup images'),
 ]
 
 
