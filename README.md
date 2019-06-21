@@ -11,6 +11,10 @@ Installation Guide
 2. Unzip the package
 3. Modify operation variables in `bampi/driver.py`
 4. Copy `bampi` directory to `/usr/lib/python2.7/dist-packages/nova/virt/`
+5. Copy `bampi.py` file to `/usr/lib/python2.7/dist-packages/nova/conf/`
+5. Add two lines in `/usr/lib/python2.7/dist-packages/nova/conf/__init__.py`
+  * `from nova.conf import bampi`
+  * `bampi.register_opts(CONF)`
 5. Modify `/etc/nova/nova-compute.conf`
   * `compute_driver=bampi.BampiDriver`
   * `sync_power_state_interval=60`
@@ -22,37 +26,21 @@ Reference for BAMPI Driver Operation Variables
 
 ### BAMPI Basic Information
 
-```
-BAMPI_IP_ADDR = '<IP_ADDR>'
-BAMPI_PORT = <PORT>
-BAMPI_API_BASE_URL = '<URL>'
-BAMPI_USER = '<USERNAME>'
-BAMPI_PASS = '<PASSWORD>'
-DUMMY_IMG_NAME = 'IMG_NAME'
-```
-
-### Peregrine Basic Information
+For example, in `nova-compute.conf`:
 
 ```
-PEREGRINE_IP_ADDR = '<IP_ADDR>'
-PEREGRINE_PORT = <PORT>
-PEREGRINE_API_BASE_URL = '<URL>'
-PEREGRINE_USER = '<USERNAME'
-PEREGRINE_PASS = '<PASSWORD>'
-```
+[bampi]
+bampi_endpoint = http://bampi.bampi.net/bampi/api/kddi/v1
+bampi_username = admin
+bampi_password = admin
+dummy_image_name = clonezilla-live-install-less_image.iso
 
-### HaaS-core Basic Information
+peregrine_endpoint = http://peregrine.bampi.net:8282/controller/nb/v3
+peregrine_username = admin
+peregrine_password = admin
+provision_vlan_id = 41
 
-```
-HAAS_CORE_IP_ADDR = '<IP_ADDR>'
-HAAS_CORE_PORT = <PORT>
-HAAS_CORE_API_BASE_URL = '<URL>'
-OS_USER = '<USERNAME>'
-OS_PASS = '<PASSWORD>'
-```
-
-### Network Configuration for Provisioning
-
-```
-PROVISION_VLAN_ID = <VLAN_ID>
+haas_core_endpoint = http://hcore-1.bampi.net:8080//haas-core/api
+haas_core_username = admin
+haas_core_password = password
 ```
