@@ -590,6 +590,17 @@ class BampiDriver(driver.ComputeDriver):
 
         LOG.info(_LI("Snapshot image upload complete"), instance=instance)
 
+        # Notify upper service to take the rest when backup task is done
+        self._post_snapshot(instance)
+
+    def _post_snapshot(self, instance):
+        LOG.info(_LI("[HAAS_CORE] REQ => Backup callback..."),
+                 instance=instance)
+        r = requests.put('{haas_core_endpoint}/servers/{hostname}/backupCallback'
+                            .format(haas_core_endpoint=CONF.bampi.haas_core_endpoint,
+                                    hostname=instance.hostname),
+                         auth=HTTPBasicAuth(CONF.bampi.haas_core_username, CONF.bampi.haas_core_password))
+
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
         LOG.info(_LI("Reboot %(hostname)s, reboot_type=%(reboot_type)s"),
