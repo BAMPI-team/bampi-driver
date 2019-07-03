@@ -11,6 +11,9 @@ bampi_options = [
         'bampi_endpoint',
         help='URL override for the BAMPI API endpoint.'),
     cfg.StrOpt(
+        'bampi_image_endpoint',
+        help='URL override for the BAMPI image endpoint.'),
+    cfg.StrOpt(
         'bampi_username',
         help='BAMPI admin name.'),
     cfg.StrOpt(

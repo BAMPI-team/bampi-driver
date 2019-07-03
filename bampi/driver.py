@@ -7,6 +7,7 @@ provision bare metal resources.
 import collections
 import contextlib
 import os
+import urllib2
 import uuid
 
 
@@ -561,12 +562,15 @@ class BampiDriver(driver.ComputeDriver):
                  instance=instance)
 
         with utils.tempdir(dir=snapshot_directory) as tmpdir:
-            # Create a 16 MB file with random content and name as fake image
-            # under the snapshot directory
+            # Retrieve snapshot image from baremetal service
+            image_name = 'clonezilla-live-{snapshot_name}.iso'.format(snapshot_name=snapshot_name)
+            filedata = urllib2.urlopen('{bampi_image_endpoint}/{image_name}'
+                                        .format(bampi_image_endpoint=CONF.bampi.bampi_image_endpoint,
+                                                image_name=image_name))
+            datatowrite = filedata.read()
             out_path = os.path.join(tmpdir, snapshot_name)
-            with open(out_path, 'w') as f:
-                for i in range((16*2**20)/512):
-                    f.write(os.urandom(512))
+            with open(out_path, 'wb') as f:
+                f.write(datatowrite)
             LOG.info(_LI("Snapshot created, beginning image upload"),
                          instance=instance)
 
@@ -580,8 +584,6 @@ class BampiDriver(driver.ComputeDriver):
                          'snapshot_directory': snapshot_directory
                      },
                      instance=instance)
-            # TODO: We use dummy file here right now as we don't actually have
-            # the backup image
             with open(out_path) as image_file:
                 self._image_api.update(context,
                                        image_id,
