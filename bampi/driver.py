@@ -475,7 +475,7 @@ class BampiDriver(driver.ComputeDriver):
                                                   instance,
                                                   image_format,
                                                   snapshot['name'])
-        snapshot_name = uuid.uuid4().hex
+        snapshot_name = uuid.uuid4().hex[:8]
 
         update_task_state(task_state=task_states.IMAGE_PENDING_UPLOAD)
         LOG.info(_LI("Image pending upload..."), instance=instance)
