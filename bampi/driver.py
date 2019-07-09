@@ -438,12 +438,13 @@ class BampiDriver(driver.ComputeDriver):
                         "using Peregrine-H. Abort instance spawning...")
 
     def _create_snapshot_metadata(self, image_meta, instance,
-                                  img_fmt, snp_name):
+                                  img_fmt, snp_name, snp_desc):
         metadata = {'is_public': False,
                     'status': 'active',
                     'name': snp_name,
                     'tags': ['haas', 'backup'],
                     'properties': {
+                                   'description': snp_desc,
                                    'kernel_id': instance.kernel_id,
                                    'image_location': 'snapshot',
                                    'image_state': 'available',
@@ -471,11 +472,12 @@ class BampiDriver(driver.ComputeDriver):
             raise exception.InstanceNotRunning(instance_id=instance.uuid)
         snapshot = self._image_api.get(context, image_id)
         image_format = 'raw'
+        snapshot_name = uuid.uuid4().hex[:8]
         metadata = self._create_snapshot_metadata(instance.image_meta,
                                                   instance,
                                                   image_format,
+                                                  snapshot_name,
                                                   snapshot['name'])
-        snapshot_name = uuid.uuid4().hex[:8]
 
         update_task_state(task_state=task_states.IMAGE_PENDING_UPLOAD)
         LOG.info(_LI("Image pending upload..."), instance=instance)
