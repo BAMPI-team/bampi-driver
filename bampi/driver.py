@@ -7,7 +7,6 @@ provision bare metal resources.
 import collections
 import contextlib
 import os
-import urllib2
 import uuid
 
 
@@ -564,13 +563,15 @@ class BampiDriver(driver.ComputeDriver):
         with utils.tempdir(dir=snapshot_directory) as tmpdir:
             # Retrieve snapshot image from baremetal service
             image_name = 'clonezilla-live-{snapshot_name}.iso'.format(snapshot_name=snapshot_name)
-            filedata = urllib2.urlopen('{bampi_image_endpoint}/{image_name}'
-                                        .format(bampi_image_endpoint=CONF.bampi.bampi_image_endpoint,
-                                                image_name=image_name))
-            datatowrite = filedata.read()
             out_path = os.path.join(tmpdir, snapshot_name)
+            download_url = '{bampi_image_endpoint}/{image_name}'.format(
+                    bampi_image_endpoint=CONF.bampi.bampi_image_endpoint,
+                    image_name=image_name)
+            r = requests.get(download_url, stream=True)
             with open(out_path, 'wb') as f:
-                f.write(datatowrite)
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
             LOG.info(_LI("Snapshot created, beginning image upload"),
                          instance=instance)
 
