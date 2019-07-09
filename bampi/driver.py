@@ -280,6 +280,11 @@ class BampiDriver(driver.ComputeDriver):
             # Requesting outer service to execute the task
             LOG.info(_LI("[BAMPI] REQ => Starting provision task %s..."),
                      task['taskType'], instance=instance)
+
+            LOG.info(_LI("image_meta=%s"), image_meta, instance=instance)
+            if task['taskType'] == 'restore_os' and 'backup' in image_meta.tags:
+                task['options'] = 'default'
+
             r = requests.post('{bampi_endpoint}/tasks'
                                 .format(bampi_endpoint=CONF.bampi.bampi_endpoint),
                               auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password), json=task)
