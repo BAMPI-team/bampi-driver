@@ -281,8 +281,9 @@ class BampiDriver(driver.ComputeDriver):
             LOG.info(_LI("[BAMPI] REQ => Starting provision task %s..."),
                      task['taskType'], instance=instance)
 
-            LOG.info(_LI("image_meta=%s"), image_meta, instance=instance)
-            if task['taskType'] == 'restore_os' and 'backup' in image_meta.tags:
+            # Differentiate between golden image and user backup image
+            # User backup image does not need network configuration
+            if task['taskType'] == 'restore_os' and image_meta.disk_format == 'raw':
                 task['options'] = 'default'
 
             r = requests.post('{bampi_endpoint}/tasks'
