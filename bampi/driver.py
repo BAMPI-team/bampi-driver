@@ -6,10 +6,14 @@ provision bare metal resources.
 
 import collections
 import contextlib
+import os
+import uuid
+
 
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_service import loopingcall
+from oslo_utils import fileutils
 from oslo_utils import versionutils
 
 from nova.compute import arch
@@ -27,6 +31,8 @@ from nova.virt import diagnostics
 from nova.virt import driver
 from nova.virt import hardware
 from nova.virt import virtapi
+from nova import image
+from nova import utils
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -149,6 +155,7 @@ class BampiDriver(driver.ComputeDriver):
         self._mounts = {}
         self._interfaces = {}
         self.active_migrations = {}
+        self._image_api = image.API()
         if not _BAMPI_NODES:
             set_nodes([CONF.host])
 
@@ -430,10 +437,175 @@ class BampiDriver(driver.ComputeDriver):
                 raise exception.NovaException("Cannot shutdown switch port "
                         "using Peregrine-H. Abort instance spawning...")
 
+    def _create_snapshot_metadata(self, image_meta, instance,
+                                  img_fmt, snp_name, snp_desc):
+        metadata = {'is_public': False,
+                    'status': 'active',
+                    'name': snp_name,
+                    'tags': ['haas', 'backup'],
+                    'properties': {
+                                   'description': snp_desc,
+                                   'kernel_id': instance.kernel_id,
+                                   'image_location': 'snapshot',
+                                   'image_state': 'available',
+                                   'owner_id': instance.project_id,
+                                   'ramdisk_id': instance.ramdisk_id,
+                                   }
+                    }
+        if instance.os_type:
+            metadata['properties']['os_type'] = instance.os_type
+
+        if image_meta.disk_format == 'ami':
+            metadata['disk_format'] = 'ami'
+        else:
+            metadata['disk_format'] = img_fmt
+
+        if image_meta.obj_attr_is_set("container_format"):
+            metadata['container_format'] = image_meta.container_format
+        else:
+            metadata['container_format'] = "bare"
+
+        return metadata
+
     def snapshot(self, context, instance, image_id, update_task_state):
         if instance.uuid not in self.instances:
             raise exception.InstanceNotRunning(instance_id=instance.uuid)
-        update_task_state(task_state=task_states.IMAGE_UPLOADING)
+        snapshot = self._image_api.get(context, image_id)
+        image_format = 'raw'
+        snapshot_name = uuid.uuid4().hex[:8]
+        metadata = self._create_snapshot_metadata(instance.image_meta,
+                                                  instance,
+                                                  image_format,
+                                                  snapshot_name,
+                                                  snapshot['name'])
+
+        update_task_state(task_state=task_states.IMAGE_PENDING_UPLOAD)
+        LOG.info(_LI("Image pending upload..."), instance=instance)
+
+        snapshot_directory = CONF.bampi.backup_directory
+        fileutils.ensure_tree(snapshot_directory)
+
+        def _get_task_status(t_id):
+            r = requests.get("{bampi_endpoint}/tasks/{task_id}"
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
+                                        task_id=t_id),
+                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password))
+            t_status = r.json()['status']
+            return t_status
+
+        def _wait_for_ready():
+            """Called at an interval until the task is successfully ended."""
+            status = _get_task_status(t_id)
+            LOG.debug(_LI("[BAMPI] Task %(task_id)s status=%(status)s"),
+                     {'task_id': t_id,
+                      'status': status},
+                     instance=instance)
+
+            if status == 'Success':
+                LOG.info(_LI("[BAMPI] Task %(task_id)s ended successfully."),
+                         {'task_id': t_id,
+                          'status': status},
+                         instance=instance)
+                raise loopingcall.LoopingCallDone()
+            if status == 'Error':
+                LOG.error(_LE("[BAMPI] Task %(task_id)s failed."),
+                          {'task_id': t_id},
+                          instance=instance)
+                raise loopingcall.LoopingCallDone(False)
+
+        backup_tasks_q = [{
+                    'taskType': 'change_boot_mode',
+                    'taskProfile': 'PXE'
+                }, {
+                    'taskType': 'disposable_os_run_script',
+                    'taskProfile': 'haas_backup',
+                    'options': snapshot_name
+                }, {
+                    'taskType': 'change_boot_mode',
+                    'taskProfile': 'Disabled'
+                }]
+
+        # Iterate through all tasks in backup task queue
+        for task in backup_tasks_q:
+            task['hostname'] = instance.display_name
+
+            # Requesting outer service to execute the task
+            LOG.info(_LI("[BAMPI] REQ => Starting backup task %s..."),
+                     task['taskType'], instance=instance)
+            r = requests.post('{bampi_endpoint}/tasks'
+                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint),
+                              auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password), json=task)
+            try:
+                t_id = r.json()['id']
+            except KeyError:
+                # If we cannot find 'id' in return json...
+                LOG.error(_LE("[BAMPI] RESP (backup) => task_type=%s, task_profile=%s, ret_code=%s"),
+                          task['taskType'], task['taskProfile'], r.status_code,
+                          instance=instance)
+                raise exception.NovaException("BAMPI cannot execute task. Abort instance backup...")
+            else:
+                LOG.info(_LI("[BAMPI] RESP (backup) => ret_code=%s, task_id=%s"),
+                         r.status_code, t_id, instance=instance)
+
+            # Polling for task status
+            time = loopingcall.FixedIntervalLoopingCall(_wait_for_ready)
+            ret = time.start(interval=30).wait()
+
+            # Task failed, abort spawning
+            if ret == False:
+                raise exception.NovaException("Backup task failed. Abort instance backup...")
+            else:
+                LOG.info(_LI("[BAMPI] Backup task %s:%s has ended successfully."),
+                         task['taskType'],
+                         task['taskProfile'],
+                         instance=instance)
+
+        LOG.info(_LI("[BAMPI] All backup tasks have ended successfully."),
+                 instance=instance)
+
+        with utils.tempdir(dir=snapshot_directory) as tmpdir:
+            # Retrieve snapshot image from baremetal service
+            image_name = 'clonezilla-live-{snapshot_name}.iso'.format(snapshot_name=snapshot_name)
+            out_path = os.path.join(tmpdir, snapshot_name)
+            download_url = '{bampi_image_endpoint}/{image_name}'.format(
+                    bampi_image_endpoint=CONF.bampi.bampi_image_endpoint,
+                    image_name=image_name)
+            r = requests.get(download_url, stream=True)
+            with open(out_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            LOG.info(_LI("Snapshot created, beginning image upload"),
+                         instance=instance)
+
+            # Upload that image to the image service
+            update_task_state(task_state=task_states.IMAGE_UPLOADING,
+                    expected_state=task_states.IMAGE_PENDING_UPLOAD)
+            LOG.info(_LI("Image uploading with metadata=%(metadata)s, "
+                         "snapshot_directory=%(snapshot_directory)s"),
+                     {
+                         'metadata': metadata,
+                         'snapshot_directory': snapshot_directory
+                     },
+                     instance=instance)
+            with open(out_path) as image_file:
+                self._image_api.update(context,
+                                       image_id,
+                                       metadata,
+                                       image_file)
+
+        LOG.info(_LI("Snapshot image upload complete"), instance=instance)
+
+        # Notify upper service to take the rest when backup task is done
+        self._post_snapshot(instance)
+
+    def _post_snapshot(self, instance):
+        LOG.info(_LI("[HAAS_CORE] REQ => Backup callback..."),
+                 instance=instance)
+        r = requests.put('{haas_core_endpoint}/servers/{hostname}/backupCallback'
+                            .format(haas_core_endpoint=CONF.bampi.haas_core_endpoint,
+                                    hostname=instance.hostname),
+                         auth=HTTPBasicAuth(CONF.bampi.haas_core_username, CONF.bampi.haas_core_password))
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):

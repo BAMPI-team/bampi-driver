@@ -11,6 +11,9 @@ bampi_options = [
         'bampi_endpoint',
         help='URL override for the BAMPI API endpoint.'),
     cfg.StrOpt(
+        'bampi_image_endpoint',
+        help='URL override for the BAMPI image endpoint.'),
+    cfg.StrOpt(
         'bampi_username',
         help='BAMPI admin name.'),
     cfg.StrOpt(
@@ -45,6 +48,10 @@ bampi_options = [
         'provision_vlan_id',
         default=41,
         help='Dedicated VLAN ID for provisioning purpose'),
+    cfg.StrOpt(
+        'backup_directory',
+        default='/tmp/snapshots',
+        help='Temporary directory for backup images'),
 ]
 
 
