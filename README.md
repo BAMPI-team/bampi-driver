@@ -31,6 +31,7 @@ For example, in `nova-compute.conf`:
 ```
 [bampi]
 bampi_endpoint = http://bampi.bampi.net/bampi/api/kddi/v1
+bampi_image_endpoint = http://bampi.bampi.net/partimag
 bampi_username = admin
 bampi_password = admin
 dummy_image_name = clonezilla-live-install-less_image.iso
@@ -40,7 +41,9 @@ peregrine_username = admin
 peregrine_password = admin
 provision_vlan_id = 41
 
-haas_core_endpoint = http://hcore-1.bampi.net:8080//haas-core/api
+haas_core_endpoint = http://hcore-1.bampi.net:8080/haas-core/api
 haas_core_username = admin
 haas_core_password = password
+
+backup_directory = /tmp/snapshots
 ```
