@@ -15,7 +15,7 @@ Installation Guide
 5. Add two lines in `/usr/lib/python2.7/dist-packages/nova/conf/__init__.py`
   * `from nova.conf import bampi`
   * `bampi.register_opts(CONF)`
-5. Modify `/etc/nova/nova-compute.conf`
+5. Modify `/etc/nova/nova-compute.conf` in `[DEFAULT]` section
   * `compute_driver=bampi.BampiDriver`
   * `sync_power_state_interval=60`
 6. Restart nova-compute service
