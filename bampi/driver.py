@@ -448,7 +448,6 @@ class BampiDriver(driver.ComputeDriver):
         metadata = {'is_public': False,
                     'status': 'active',
                     'name': snp_name,
-                    'tags': ['haas', 'backup'],
                     'properties': {
                                    'description': snp_desc,
                                    'kernel_id': instance.kernel_id,
