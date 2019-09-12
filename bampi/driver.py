@@ -6,6 +6,7 @@ provision bare metal resources.
 
 import collections
 import contextlib
+import copy
 import os
 import uuid
 
@@ -16,18 +17,17 @@ from oslo_service import loopingcall
 from oslo_utils import fileutils
 from oslo_utils import versionutils
 
-from nova.compute import arch
-from nova.compute import hv_type
 from nova.compute import power_state
 from nova.compute import task_states
-from nova.compute import vm_mode
 import nova.conf
 from nova.console import type as ctype
 from nova import exception
 from nova.i18n import _LI
 from nova.i18n import _LW
 from nova.i18n import _LE
-from nova.virt import diagnostics
+from nova import objects
+from nova.objects import diagnostics as diagnostics_obj
+from nova.objects import fields
 from nova.virt import driver
 from nova.virt import hardware
 from nova.virt import virtapi
@@ -125,7 +125,11 @@ class BampiDriver(driver.ComputeDriver):
         "has_imagecache": False,
         "supports_recreate": True,
         "supports_migrate_to_same_host": False,
-        "supports_attach_interface": True
+        "supports_attach_interface": True,
+        "supports_tagged_attach_interface": True,
+        "supports_tagged_attach_volume": True,
+        "supports_extend_volume": True,
+        "supports_multiattach": True
     }
 
     # Since we don't have a real hypervisor, pretend we have lots of
@@ -149,15 +153,22 @@ class BampiDriver(driver.ComputeDriver):
           'hypervisor_hostname': CONF.host,
           'cpu_info': {},
           'disk_available_least': 0,
-          'supported_instances': [(arch.X86_64, hv_type.BAREMETAL, vm_mode.HVM)],
+          'supported_instances': [(
+              fields.Architecture.X86_64,
+              fields.HVType.BAREMETAL,
+              fields.VMMode.HVM)],
           'numa_topology': None,
           }
         self._mounts = {}
         self._interfaces = {}
         self.active_migrations = {}
         self._image_api = image.API()
+        self._nodes = self._init_nodes()
+
+    def _init_nodes(self):
         if not _BAMPI_NODES:
             set_nodes([CONF.host])
+        return copy.copy(_BAMPI_NODES)
 
     def init_host(self, host):
         return
@@ -166,7 +177,7 @@ class BampiDriver(driver.ComputeDriver):
         return [self.instances[uuid].name for uuid in self.instances.keys()]
 
     def list_instance_uuids(self):
-        return self.instances.keys()
+        return list(self.instances.keys())
 
     def plug_vifs(self, instance, network_info):
         """Plug VIFs into networks."""
@@ -188,7 +199,8 @@ class BampiDriver(driver.ComputeDriver):
         LOG.info(_LI("METHOD REBUILD END"), instance=instance)
 
     def spawn(self, context, instance, image_meta, injected_files,
-              admin_password, network_info=None, block_device_info=None):
+              admin_password, allocations, network_info=None,
+              block_device_info=None):
         uuid = instance.uuid
         state = power_state.RUNNING
         flavor = instance.flavor
@@ -654,7 +666,7 @@ class BampiDriver(driver.ComputeDriver):
         pass
 
     def unrescue(self, instance, network_info):
-        pass
+        self.instances[instance.uuid].state = power_state.RUNNING
 
     def poll_rebooting_instances(self, timeout, instances):
         pass
@@ -667,7 +679,8 @@ class BampiDriver(driver.ComputeDriver):
 
     def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info=None, power_on=True):
-        pass
+        self.instances[instance.uuid] = FakeInstance(
+            instance.name, power_state.RUNNING, instance.uuid)
 
     def post_live_migration_at_destination(self, context, instance,
                                            network_info,
@@ -844,7 +857,7 @@ class BampiDriver(driver.ComputeDriver):
 
 
     def destroy(self, context, instance, network_info, block_device_info=None,
-                destroy_disks=True, migrate_data=None):
+                destroy_disks=True):
 
         key = instance.uuid
         if key in self.instances:
@@ -971,7 +984,7 @@ class BampiDriver(driver.ComputeDriver):
             self._mounts[instance_name] = {}
         self._mounts[instance_name][mountpoint] = connection_info
 
-    def detach_volume(self, connection_info, instance, mountpoint,
+    def detach_volume(self, conext, connection_info, instance, mountpoint,
                       encryption=None):
         """Detach the disk attached to the instance."""
         try:
@@ -979,7 +992,7 @@ class BampiDriver(driver.ComputeDriver):
         except KeyError:
             pass
 
-    def swap_volume(self, old_connection_info, new_connection_info,
+    def swap_volume(self, context, old_connection_info, new_connection_info,
                     instance, mountpoint, resize_to):
         """Replace the disk attached to the instance."""
         instance_name = instance.name
@@ -993,7 +1006,7 @@ class BampiDriver(driver.ComputeDriver):
                     instance_uuid=instance.uuid)
         self._interfaces[vif['id']] = vif
 
-    def detach_interface(self, instance, vif):
+    def detach_interface(self, context, instance, vif):
         try:
             del self._interfaces[vif['id']]
         except KeyError:
@@ -1024,11 +1037,7 @@ class BampiDriver(driver.ComputeDriver):
                 bampi_instance = BampiInstance(instance.name, state, instance.uuid)
                 self.instances[instance.uuid] = bampi_instance
 
-                return hardware.InstanceInfo(state=state,
-                                             max_mem_kb=0,
-                                             mem_kb=0,
-                                             num_cpu=2,
-                                             cpu_time_ns=0)
+                return hardware.InstanceInfo(state=state)
 
         i = self.instances[instance.uuid]
 
@@ -1046,11 +1055,7 @@ class BampiDriver(driver.ComputeDriver):
             p_st = r.json()['status']
             i.state = power_state_map[p_st]
 
-        return hardware.InstanceInfo(state=i.state,
-                                     max_mem_kb=0,
-                                     mem_kb=0,
-                                     num_cpu=2,
-                                     cpu_time_ns=0)
+        return hardware.InstanceInfo(state=i.state)
 
     def get_diagnostics(self, instance):
         return {'cpu0_time': 17300000000,
@@ -1071,7 +1076,7 @@ class BampiDriver(driver.ComputeDriver):
         }
 
     def get_instance_diagnostics(self, instance):
-        diags = diagnostics.Diagnostics(state='running', driver='bampi',
+        diags = diagnostics_obj.Diagnostics(state='running', driver='bampi',
                 hypervisor_os='bampi-os', uptime=46664, config_drive=True)
         diags.add_cpu(time=17300000000)
         diags.add_nic(mac_address='01:23:45:67:89:ab',
@@ -1183,7 +1188,7 @@ class BampiDriver(driver.ComputeDriver):
                 'sockets': 4,
                 }),
             ])
-        if nodename not in _BAMPI_NODES:
+        if nodename not in self._nodes:
             return {}
 
         host_status = self.host_status_base.copy()
