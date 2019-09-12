@@ -1171,6 +1171,37 @@ class BampiDriver(driver.ComputeDriver):
     def refresh_instance_security_rules(self, instance):
         return True
 
+    def get_inventory(self, nodename):
+        """Return a dict, keyed by resource class, of inventory information for
+        the supplied node.
+        """
+        disk_gb = 600000
+        memory_mb = 800000
+        vcpus = 1000
+
+        result = {
+            fields.ResourceClass.VCPU: {
+                'total': vcpus,
+                'min_unit': 1,
+                'max_unit': vcpus,
+                'step_size': 1,
+            },
+            fields.ResourceClass.MEMORY_MB: {
+                'total': memory_mb,
+                'min_unit': 1,
+                'max_unit': memory_mb,
+                'step_size': 1,
+            },
+            fields.ResourceClass.DISK_GB: {
+                'total': disk_gb,
+                'min_unit': 1,
+                'max_unit': disk_gb,
+                'step_size': 1,
+            },
+        }
+
+        return result
+
     def get_available_resource(self, nodename):
         """Updates compute manager resource info on ComputeNode table.
 
