@@ -863,7 +863,7 @@ class BampiDriver(driver.ComputeDriver):
         if key in self.instances:
             self._destroy(instance)
             self.cleanup(context, instance, network_info, block_device_info,
-                         destroy_disks, migrate_data)
+                         destroy_disks, None)
         else:
             LOG.warn(_LW("Key '%(key)s' not in instances '%(inst)s'"),
                         {'key': key,
