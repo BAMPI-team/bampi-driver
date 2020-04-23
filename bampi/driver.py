@@ -860,6 +860,9 @@ class BampiDriver(driver.ComputeDriver):
             self._destroy(instance)
             self.cleanup(context, instance, network_info, block_device_info,
                          destroy_disks, migrate_data)
+            self._mark_available(instance)
+            self._undefine(instance)
+            self._do_power_on(instance)
         else:
             LOG.warn(_LW("Key '%(key)s' not in instances '%(inst)s'"),
                         {'key': key,
@@ -958,27 +961,6 @@ class BampiDriver(driver.ComputeDriver):
 
         LOG.info(_LI("[BAMPI] All cleanup tasks have ended successfully."),
                  instance=instance)
-        LOG.info(_LI("[HAAS_CORE] REQ => Mark server as available..."),
-                 instance=instance)
-        r = requests.put('{haas_core_endpoint}/servers/{hostname}/available'
-                            .format(haas_core_endpoint=CONF.bampi.haas_core_endpoint,
-                                    hostname=instance.hostname),
-                         auth=HTTPBasicAuth(CONF.bampi.haas_core_username, CONF.bampi.haas_core_password))
-
-        # Boot into disposable OS to stand-by
-        LOG.info(_LI("[BAMPI] Power on hostname=%s to stand-by" % instance.hostname),
-                 instance=instance)
-        try:
-            r = requests.put("{bampi_endpoint}/servers/{hostname}/powerStatus"
-                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
-                                        hostname=instance.hostname),
-                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
-                             json={'status': 'on'})
-            r.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
-
-        self._undefine(instance)
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       disk_bus=None, device_type=None, encryption=None):
