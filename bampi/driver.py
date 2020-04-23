@@ -728,8 +728,8 @@ class BampiDriver(driver.ComputeDriver):
             r = requests.put("{bampi_endpoint}/servers/{hostname}/powerStatus"
                                 .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         hostname=instance.hostname),
-                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
-                             json={'status': 'on'})
+                            auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
+                            json={'status': 'on'})
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
@@ -738,7 +738,7 @@ class BampiDriver(driver.ComputeDriver):
                  block_device_info=None):
         LOG.info(_LI("[BAMPI] Power on hostname=%s" % instance.hostname), instance=instance)
         self._do_power_on(instance)
-            self.instances[instance.uuid].state = power_state.RUNNING
+        self.instances[instance.uuid].state = power_state.RUNNING
 
     def trigger_crash_dump(self, instance):
         pass
