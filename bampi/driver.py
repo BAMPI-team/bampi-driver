@@ -865,6 +865,14 @@ class BampiDriver(driver.ComputeDriver):
                         {'key': key,
                          'inst': self.instances}, instance=instance)
 
+    def _mark_available(self, instance):
+        LOG.info(_LI("[HAAS_CORE] REQ => Mark server as available..."),
+                 instance=instance)
+        r = requests.put('{haas_core_endpoint}/servers/{hostname}/available'
+                            .format(haas_core_endpoint=CONF.bampi.haas_core_endpoint,
+                                    hostname=instance.hostname),
+                         auth=HTTPBasicAuth(CONF.bampi.haas_core_username, CONF.bampi.haas_core_password))
+
     def _undefine(self, instance):
         flavor = instance.flavor
         self.resources.release(
