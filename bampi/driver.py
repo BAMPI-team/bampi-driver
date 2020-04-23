@@ -183,8 +183,15 @@ class BampiDriver(driver.ComputeDriver):
                 preserve_ephemeral=False):
         """Destroy and re-make this instance."""
         LOG.info(_LI("METHOD REBUILD START"), instance=instance)
+
+        # Start destroying instance
+        self.destroy(context, instance, network_info)
+
+        # Start spawning instance
         instance.task_state = task_states.REBUILD_SPAWNING
         instance.save(expected_task_state=[task_states.REBUILDING])
+        self.spawn(context, instance, image_meta, injected_files, admin_password, network_info)
+
         LOG.info(_LI("METHOD REBUILD END"), instance=instance)
 
     def spawn(self, context, instance, image_meta, injected_files,
