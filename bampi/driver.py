@@ -723,9 +723,7 @@ class BampiDriver(driver.ComputeDriver):
         finally:
             self.instances[instance.uuid].state = power_state.SHUTDOWN
 
-    def power_on(self, context, instance, network_info,
-                 block_device_info=None):
-        LOG.info(_LI("[BAMPI] Power on hostname=%s" % instance.hostname), instance=instance)
+    def _do_power_on(self, instance):
         try:
             r = requests.put("{bampi_endpoint}/servers/{hostname}/powerStatus"
                                 .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
@@ -735,7 +733,11 @@ class BampiDriver(driver.ComputeDriver):
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
-        finally:
+
+    def power_on(self, context, instance, network_info,
+                 block_device_info=None):
+        LOG.info(_LI("[BAMPI] Power on hostname=%s" % instance.hostname), instance=instance)
+        self._do_power_on(instance)
             self.instances[instance.uuid].state = power_state.RUNNING
 
     def trigger_crash_dump(self, instance):
