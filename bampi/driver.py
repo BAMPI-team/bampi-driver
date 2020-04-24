@@ -185,7 +185,8 @@ class BampiDriver(driver.ComputeDriver):
         LOG.info(_LI("METHOD REBUILD START"), instance=instance)
 
         # Start destroying instance
-        self.destroy(context, instance, network_info)
+        self._destroy(instance)
+        self.cleanup(context, instance, network_info)
 
         # Start spawning instance
         instance.task_state = task_states.REBUILD_SPAWNING
