@@ -183,8 +183,18 @@ class BampiDriver(driver.ComputeDriver):
                 preserve_ephemeral=False):
         """Destroy and re-make this instance."""
         LOG.info(_LI("METHOD REBUILD START"), instance=instance)
+
+        # Start destroying instance
+        self._destroy(instance)
+        self.cleanup(context, instance, network_info)
+
+        # Start spawning instance
         instance.task_state = task_states.REBUILD_SPAWNING
         instance.save(expected_task_state=[task_states.REBUILDING])
+
+        with instance.mutated_migration_context():
+            self.spawn(context, instance, image_meta, injected_files, admin_password, network_info)
+
         LOG.info(_LI("METHOD REBUILD END"), instance=instance)
 
     def spawn(self, context, instance, image_meta, injected_files,
@@ -192,12 +202,16 @@ class BampiDriver(driver.ComputeDriver):
         uuid = instance.uuid
         state = power_state.RUNNING
         flavor = instance.flavor
-        self.resources.claim(
-            vcpus=flavor.vcpus,
-            mem=flavor.memory_mb,
-            disk=flavor.root_gb)
-        bampi_instance = BampiInstance(instance.name, state, uuid)
-        self.instances[uuid] = bampi_instance
+
+        if uuid in self.instances:
+            LOG.info(_LI("We're under rebuild procedure! Skipping resource claim..."))
+        else:
+            self.resources.claim(
+                vcpus=flavor.vcpus,
+                mem=flavor.memory_mb,
+                disk=flavor.root_gb)
+            bampi_instance = BampiInstance(instance.name, state, uuid)
+            self.instances[uuid] = bampi_instance
 
         # XXX: Where dirty hack begins
         def _get_task_status(t_id):
@@ -716,20 +730,22 @@ class BampiDriver(driver.ComputeDriver):
         finally:
             self.instances[instance.uuid].state = power_state.SHUTDOWN
 
-    def power_on(self, context, instance, network_info,
-                 block_device_info=None):
-        LOG.info(_LI("[BAMPI] Power on hostname=%s" % instance.hostname), instance=instance)
+    def _do_power_on(self, instance):
         try:
             r = requests.put("{bampi_endpoint}/servers/{hostname}/powerStatus"
                                 .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
                                         hostname=instance.hostname),
-                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
-                             json={'status': 'on'})
+                            auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
+                            json={'status': 'on'})
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
-        finally:
-            self.instances[instance.uuid].state = power_state.RUNNING
+
+    def power_on(self, context, instance, network_info,
+                 block_device_info=None):
+        LOG.info(_LI("[BAMPI] Power on hostname=%s" % instance.hostname), instance=instance)
+        self._do_power_on(instance)
+        self.instances[instance.uuid].state = power_state.RUNNING
 
     def trigger_crash_dump(self, instance):
         pass
@@ -851,10 +867,21 @@ class BampiDriver(driver.ComputeDriver):
             self._destroy(instance)
             self.cleanup(context, instance, network_info, block_device_info,
                          destroy_disks, migrate_data)
+            self._mark_available(instance)
+            self._undefine(instance)
+            self._do_power_on(instance)
         else:
             LOG.warn(_LW("Key '%(key)s' not in instances '%(inst)s'"),
                         {'key': key,
                          'inst': self.instances}, instance=instance)
+
+    def _mark_available(self, instance):
+        LOG.info(_LI("[HAAS_CORE] REQ => Mark server as available..."),
+                 instance=instance)
+        r = requests.put('{haas_core_endpoint}/servers/{hostname}/available'
+                            .format(haas_core_endpoint=CONF.bampi.haas_core_endpoint,
+                                    hostname=instance.hostname),
+                         auth=HTTPBasicAuth(CONF.bampi.haas_core_username, CONF.bampi.haas_core_password))
 
     def _undefine(self, instance):
         flavor = instance.flavor
@@ -941,27 +968,6 @@ class BampiDriver(driver.ComputeDriver):
 
         LOG.info(_LI("[BAMPI] All cleanup tasks have ended successfully."),
                  instance=instance)
-        LOG.info(_LI("[HAAS_CORE] REQ => Mark server as available..."),
-                 instance=instance)
-        r = requests.put('{haas_core_endpoint}/servers/{hostname}/available'
-                            .format(haas_core_endpoint=CONF.bampi.haas_core_endpoint,
-                                    hostname=instance.hostname),
-                         auth=HTTPBasicAuth(CONF.bampi.haas_core_username, CONF.bampi.haas_core_password))
-
-        # Boot into disposable OS to stand-by
-        LOG.info(_LI("[BAMPI] Power on hostname=%s to stand-by" % instance.hostname),
-                 instance=instance)
-        try:
-            r = requests.put("{bampi_endpoint}/servers/{hostname}/powerStatus"
-                                .format(bampi_endpoint=CONF.bampi.bampi_endpoint,
-                                        hostname=instance.hostname),
-                             auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
-                             json={'status': 'on'})
-            r.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
-
-        self._undefine(instance)
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       disk_bus=None, device_type=None, encryption=None):
