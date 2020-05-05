@@ -191,7 +191,9 @@ class BampiDriver(driver.ComputeDriver):
         # Start spawning instance
         instance.task_state = task_states.REBUILD_SPAWNING
         instance.save(expected_task_state=[task_states.REBUILDING])
-        self.spawn(context, instance, image_meta, injected_files, admin_password, network_info)
+
+        with instance.mutated_migration_context():
+            self.spawn(context, instance, image_meta, injected_files, admin_password, network_info)
 
         LOG.info(_LI("METHOD REBUILD END"), instance=instance)
 
