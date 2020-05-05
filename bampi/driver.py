@@ -200,12 +200,16 @@ class BampiDriver(driver.ComputeDriver):
         uuid = instance.uuid
         state = power_state.RUNNING
         flavor = instance.flavor
-        self.resources.claim(
-            vcpus=flavor.vcpus,
-            mem=flavor.memory_mb,
-            disk=flavor.root_gb)
-        bampi_instance = BampiInstance(instance.name, state, uuid)
-        self.instances[uuid] = bampi_instance
+
+        if uuid in self.instances:
+            LOG.info(_LI("We're under rebuild procedure! Skipping resource claim..."))
+        else:
+            self.resources.claim(
+                vcpus=flavor.vcpus,
+                mem=flavor.memory_mb,
+                disk=flavor.root_gb)
+            bampi_instance = BampiInstance(instance.name, state, uuid)
+            self.instances[uuid] = bampi_instance
 
         # XXX: Where dirty hack begins
         def _get_task_status(t_id):
