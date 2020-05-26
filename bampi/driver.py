@@ -645,7 +645,7 @@ class BampiDriver(driver.ComputeDriver):
                              auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
                              json=payload)
             r.raise_for_status()
-        except requests.exception.HTTPError as e:
+        except requests.exceptions.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
         finally:
             self.instances[instance.uuid].state = power_state.RUNNING
@@ -725,7 +725,7 @@ class BampiDriver(driver.ComputeDriver):
                              auth=HTTPBasicAuth(CONF.bampi.bampi_username, CONF.bampi.bampi_password),
                              json={'status': 'off'})
             r.raise_for_status()
-        except requests.exception.HTTPError as e:
+        except requests.exceptions.HTTPError as e:
             LOG.warn(_LW("[BAMPI] %s" % e), instance=instance)
         finally:
             self.instances[instance.uuid].state = power_state.SHUTDOWN
